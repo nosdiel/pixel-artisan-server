@@ -45,6 +45,16 @@ type OnlineProduct = Record<string, unknown> & {
   };
 };
 
+type OnlineSku = {
+  id?: string;
+  square_id?: string;
+  name?: string | null;
+  price?: {
+    current_subunits?: number;
+    current?: number;
+  };
+};
+
 /** Pull catalog items from a public Square Online ordering page. */
 export async function fetchOnlineSiteCatalog(siteUrl: string): Promise<FlatItem[]> {
   const url = normalizeSiteUrl(siteUrl);
@@ -147,7 +157,44 @@ async function fetchSquareOnlineApiItems(siteUrl: URL, bootstrap: BootstrapState
 
   const categories = bootstrap.commerceLinks?.categories ?? {};
   const currency = bootstrap.storeInfo?.currency ?? "USD";
-  return dedupe(products.map((product) => onlineProductToFlat(product, categories, currency)));
+  const productHeaders: HeadersInit = {
+    Accept: "application/json, text/plain, */*",
+    Referer: siteUrl.origin,
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+  };
+  const fetchSkus = async (productId: string): Promise<OnlineSku[]> => {
+    const detailUrl = new URL(`${apiBase.pathname}/products/${encodeURIComponent(productId)}`, apiBase.origin);
+    detailUrl.searchParams.set("include", "skus");
+    detailUrl.searchParams.set("lang", "en");
+    try {
+      const r = await fetch(detailUrl, { headers: productHeaders, redirect: "follow" });
+      if (!r.ok) return [];
+      const j = (await r.json()) as { data?: { skus?: { data?: OnlineSku[] } } };
+      return j.data?.skus?.data ?? [];
+    } catch {
+      return [];
+    }
+  };
+
+  const out: FlatItem[] = [];
+  for (const product of products) {
+    const low = product.price?.low_subunits ?? product.price?.low;
+    const high = product.price?.high_subunits ?? product.price?.high;
+    const hasRange = low != null && high != null && low !== high;
+    const productId = product.square_id ?? product.id;
+    if (hasRange && productId) {
+      const skus = await fetchSkus(productId);
+      const usable = skus.filter((s) => (s.price?.current_subunits ?? s.price?.current) != null);
+      if (usable.length > 1) {
+        for (const sku of usable) {
+          out.push(skuToFlat(product, sku, categories, currency));
+        }
+        continue;
+      }
+    }
+    out.push(onlineProductToFlat(product, categories, currency));
+  }
+  return dedupe(out);
 }
 
 function onlineProductToFlat(product: OnlineProduct, categories: NonNullable<BootstrapState["commerceLinks"]>["categories"], currency: string): FlatItem {
@@ -163,6 +210,23 @@ function onlineProductToFlat(product: OnlineProduct, categories: NonNullable<Boo
     price_cents,
     currency: product.price?.currency ?? currency,
     raw: product as unknown as Json,
+  };
+}
+
+function skuToFlat(product: OnlineProduct, sku: OnlineSku, categories: NonNullable<BootstrapState["commerceLinks"]>["categories"], currency: string): FlatItem {
+  const categoryId = product.categoryIds?.find((id) => categories?.[id]?.name) ?? product.categoryIds?.[0];
+  const productId = product.square_id ?? product.id ?? product.site_product_id ?? product.name ?? "item";
+  const skuId = sku.square_id ?? sku.id ?? sku.name ?? crypto.randomUUID();
+  const cents = sku.price?.current_subunits ?? (typeof sku.price?.current === "number" ? Math.round(sku.price.current * 100) : null);
+  const variantName = sku.name?.trim() || "Default";
+  return {
+    square_item_id: `${productId}:${skuId}`,
+    name: product.name ? `${product.name} — ${variantName}` : variantName,
+    description: cleanText(product.short_description ?? product.description ?? null),
+    category: categoryId ? categories?.[categoryId]?.name ?? categoryId : null,
+    price_cents: cents,
+    currency: product.price?.currency ?? currency,
+    raw: { ...(product as Record<string, unknown>), _sku: sku } as unknown as Json,
   };
 }
 
