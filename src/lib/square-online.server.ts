@@ -10,41 +10,184 @@ type FlatItem = {
   raw: Json;
 };
 
-/**
- * Pull catalog items from a public Square Online ordering site.
- *
- * Strategy: fetch the page HTML and extract structured product data from
- * JSON-LD `<script type="application/ld+json">` blocks. Square Online sites
- * (Weebly-based) emit JSON-LD `Product` entries for each menu item, which is
- * the most stable public source of names, prices and descriptions.
- */
+type BootstrapState = {
+  siteData?: {
+    user?: { id?: string | number };
+    site?: {
+      id?: string;
+      properties?: {
+        catalogSiteId?: string;
+        classicSiteID?: string;
+      };
+    };
+  };
+  storeInfo?: { currency?: string };
+  commerceLinks?: {
+    categories?: Record<string, { name?: string; site_category_id?: string }>;
+  };
+  featureFlags?: Record<string, unknown>;
+};
+
+type OnlineProduct = Record<string, unknown> & {
+  id?: string;
+  square_id?: string;
+  site_product_id?: string;
+  name?: string;
+  short_description?: string;
+  description?: string;
+  categoryIds?: string[];
+  price?: {
+    low_subunits?: number;
+    high_subunits?: number;
+    low?: number;
+    high?: number;
+    currency?: string;
+  };
+};
+
+/** Pull catalog items from a public Square Online ordering page. */
 export async function fetchOnlineSiteCatalog(siteUrl: string): Promise<FlatItem[]> {
   const url = normalizeSiteUrl(siteUrl);
   const res = await fetch(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; LovableSignageBot/1.0)",
-      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/json",
     },
     redirect: "follow",
   });
-  if (!res.ok) {
-    throw new Error(`Square Online site error ${res.status}: failed to load ${url}`);
-  }
+  if (!res.ok) throw new Error(`Square Online site error ${res.status}: failed to load ${url}`);
+
   const html = await res.text();
-  const products = extractJsonLdProducts(html);
-  if (!products.length) {
-    // Square Online pages render most items via JS, so JSON-LD may be empty.
-    // Return an empty list rather than throwing — the sync job will simply
-    // record 0 items and the user can adjust the URL or use the API source.
-    return [];
-  }
-  return products.map(productToFlat);
+  const bootstrap = extractBootstrapState(html);
+  const apiItems = bootstrap ? await fetchSquareOnlineApiItems(url, bootstrap) : [];
+  if (apiItems.length) return apiItems;
+
+  return extractJsonLdProducts(html).map(productToFlat);
 }
 
-function normalizeSiteUrl(input: string): string {
+function normalizeSiteUrl(input: string): URL {
   let s = input.trim();
   if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
-  return s;
+  return new URL(s);
+}
+
+function extractBootstrapState(html: string): BootstrapState | null {
+  const marker = "window.__BOOTSTRAP_STATE__ =";
+  const markerIndex = html.indexOf(marker);
+  if (markerIndex < 0) return null;
+
+  const start = html.indexOf("{", markerIndex);
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < html.length; i += 1) {
+    const ch = html[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(start, i + 1)) as BootstrapState;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+async function fetchSquareOnlineApiItems(siteUrl: URL, bootstrap: BootstrapState): Promise<FlatItem[]> {
+  const ownerId = bootstrap.siteData?.user?.id?.toString();
+  const siteId = bootstrap.siteData?.site?.properties?.catalogSiteId ?? bootstrap.siteData?.site?.properties?.classicSiteID;
+  if (!ownerId || !siteId) return [];
+
+  const locationId = siteUrl.searchParams.get("location");
+  const selectedCategoryId = getSelectedCategoryId(siteUrl, bootstrap);
+  const apiBase = new URL(
+    `/app/store/api/v28/editor/users/${encodeURIComponent(ownerId)}/sites/${encodeURIComponent(siteId)}`,
+    "https://cdn5.editmysite.com",
+  );
+  const productsUrl = new URL(`${apiBase.pathname}${locationId ? `/store-locations/${encodeURIComponent(locationId)}` : ""}/products`, apiBase.origin);
+  const cacheVersion = bootstrap.featureFlags?.["ecom.square-online-published-catalog-cache-version"];
+  const products: OnlineProduct[] = [];
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const pageUrl = new URL(productsUrl);
+    pageUrl.searchParams.set("page", String(page));
+    pageUrl.searchParams.set("per_page", "100");
+    pageUrl.searchParams.set("lang", "en");
+    pageUrl.searchParams.append("visibilities[]", "visible");
+    if (selectedCategoryId) pageUrl.searchParams.append("categories[]", selectedCategoryId);
+    if (typeof cacheVersion === "string") pageUrl.searchParams.set("cache-version", cacheVersion);
+
+    const res = await fetch(pageUrl, {
+      headers: {
+        Accept: "application/json, text/plain, */*",
+        Referer: siteUrl.origin,
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      },
+      redirect: "follow",
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as { data?: OnlineProduct[]; meta?: { pagination?: { total_pages?: number } } };
+    products.push(...(json.data ?? []));
+    totalPages = json.meta?.pagination?.total_pages ?? 1;
+    page += 1;
+  } while (page <= totalPages && page <= 20);
+
+  const categories = bootstrap.commerceLinks?.categories ?? {};
+  const currency = bootstrap.storeInfo?.currency ?? "USD";
+  return dedupe(products.map((product) => onlineProductToFlat(product, categories, currency)));
+}
+
+function getSelectedCategoryId(siteUrl: URL, bootstrap: BootstrapState): string | null {
+  const fromHash = siteUrl.hash.match(/[A-Z0-9]{20,}/)?.[0];
+  if (fromHash && bootstrap.commerceLinks?.categories?.[fromHash]) return fromHash;
+  const pathMatch = siteUrl.pathname.match(/\/shop\/[^/]+\/([A-Z0-9]{20,})/i)?.[1];
+  if (pathMatch && bootstrap.commerceLinks?.categories?.[pathMatch]) return pathMatch;
+  return null;
+}
+
+function onlineProductToFlat(product: OnlineProduct, categories: NonNullable<BootstrapState["commerceLinks"]>["categories"], currency: string): FlatItem {
+  const categoryId = product.categoryIds?.find((id) => categories?.[id]?.name) ?? product.categoryIds?.[0];
+  const priceSubunits = product.price?.low_subunits ?? product.price?.high_subunits;
+  const priceUnits = product.price?.low ?? product.price?.high;
+  const price_cents = typeof priceSubunits === "number" ? priceSubunits : typeof priceUnits === "number" ? Math.round(priceUnits * 100) : null;
+  return {
+    square_item_id: String(product.square_id ?? product.id ?? product.site_product_id ?? product.name ?? crypto.randomUUID()),
+    name: product.name ?? null,
+    description: cleanText(product.short_description ?? product.description ?? null),
+    category: categoryId ? categories?.[categoryId]?.name ?? categoryId : null,
+    price_cents,
+    currency: product.price?.currency ?? currency,
+    raw: product as unknown as Json,
+  };
+}
+
+function dedupe(items: FlatItem[]): FlatItem[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.square_item_id)) return false;
+    seen.add(item.square_item_id);
+    return true;
+  });
+}
+
+function cleanText(value: string | null): string | null {
+  if (!value) return null;
+  return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || null;
 }
 
 type LdProduct = {
@@ -81,10 +224,7 @@ function collectProducts(node: unknown, out: LdProduct[]) {
   const obj = node as Record<string, unknown>;
   const t = obj["@type"];
   const types = Array.isArray(t) ? t : [t];
-  if (types.some((v) => typeof v === "string" && v.toLowerCase() === "product")) {
-    out.push(obj as LdProduct);
-  }
-  // Walk common container keys
+  if (types.some((v) => typeof v === "string" && v.toLowerCase() === "product")) out.push(obj as LdProduct);
   for (const key of ["@graph", "itemListElement", "hasPart", "mainEntity"]) {
     if (key in obj) collectProducts(obj[key], out);
   }
