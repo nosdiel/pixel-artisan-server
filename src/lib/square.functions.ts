@@ -3,6 +3,10 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { syncUserCatalog, fetchSourcePage, recomputeStaleTemplates } from "./square-sync.server";
 
+function uniqueBySquareItemId<T extends { square_item_id: string }>(rows: T[]) {
+  return Array.from(new Map(rows.map((row) => [row.square_item_id, row])).values());
+}
+
 export const syncSquareCatalog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -70,8 +74,11 @@ export const stepSquareSyncJob = createServerFn({ method: "POST" })
     try {
       const { items, cursor } = await fetchSourcePage(conn, job.cursor ?? undefined);
       const flat = items.map((it) => ({ ...it, user_id: userId }));
-      if (flat.length) {
-        const { error: insErr } = await supabase.from("square_items_cache").insert(flat);
+      const uniqueRows = uniqueBySquareItemId(flat);
+      if (uniqueRows.length) {
+        const { error: insErr } = await supabase
+          .from("square_items_cache")
+          .upsert(uniqueRows, { onConflict: "user_id,square_item_id" });
         if (insErr) throw new Error(insErr.message);
       }
       const processed = job.processed_items + flat.length;
