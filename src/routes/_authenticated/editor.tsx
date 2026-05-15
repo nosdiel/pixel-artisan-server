@@ -42,11 +42,12 @@ export const Route = createFileRoute("/_authenticated/editor")({
   ssr: false,
   validateSearch: (s: Record<string, unknown>) => ({
     template: typeof s.template === "string" ? s.template : undefined,
+    image: typeof s.image === "string" ? s.image : undefined,
   }),
 });
 
 function EditorPage() {
-  const { template: templateIdParam } = Route.useSearch();
+  const { template: templateIdParam, image: imageIdParam } = Route.useSearch();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
   const historyRef = useRef<{ stack: string[]; index: number; suspend: boolean }>({ stack: [], index: -1, suspend: false });
@@ -62,6 +63,7 @@ function EditorPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(templateIdParam ?? null);
   const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
+  const [pendingBaseImageUrl, setPendingBaseImageUrl] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
