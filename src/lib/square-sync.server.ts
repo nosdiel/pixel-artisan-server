@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
 import { fetchOnlineSiteCatalog } from "./square-online.server";
+import { fetchToastCatalog } from "./toast.server";
 
 type SquareItem = {
   id: string;
@@ -113,6 +114,9 @@ export type ConnectionSource = {
   access_token: string | null;
   environment: string;
   site_url: string | null;
+  client_id?: string | null;
+  client_secret?: string | null;
+  restaurant_guid?: string | null;
 };
 
 /** Resolve a single page of items for either source. Online-site source returns everything in one page. */
@@ -123,6 +127,19 @@ export async function fetchSourcePage(conn: ConnectionSource, cursor?: string): 
     if (!conn.site_url) throw new Error("Square Online site URL is not set");
     if (cursor) return { items: [], cursor: undefined };
     const items = await fetchOnlineSiteCatalog(conn.site_url);
+    return { items, cursor: undefined };
+  }
+  if (conn.source === "toast_api") {
+    if (!conn.client_id || !conn.client_secret || !conn.restaurant_guid) {
+      throw new Error("Toast credentials are incomplete (need client ID, secret, and restaurant GUID)");
+    }
+    if (cursor) return { items: [], cursor: undefined };
+    const items = await fetchToastCatalog({
+      environment: conn.environment,
+      clientId: conn.client_id,
+      clientSecret: conn.client_secret,
+      restaurantGuid: conn.restaurant_guid,
+    });
     return { items, cursor: undefined };
   }
   if (!conn.access_token) throw new Error("Square access token is not set");
