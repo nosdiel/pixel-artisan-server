@@ -2,7 +2,12 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Plus, ImageOff, Pencil } from "lucide-react";
+import { Plus, ImageOff, Pencil, Trash2 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 
 type ImageRow = { id: string; slug: string; title: string; width: number; height: number; optimized_size_bytes: number; original_size_bytes: number; variants: { format: string; path: string }[]; created_at: string; template_id: string | null };
 
@@ -12,6 +17,23 @@ function Dashboard() {
   const [images, setImages] = useState<ImageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDelete = async (img: ImageRow) => {
+    setDeletingId(img.id);
+    const paths = (img.variants ?? []).map((v) => v.path).filter(Boolean);
+    if (paths.length) {
+      await supabase.storage.from("images").remove(paths);
+    }
+    const { error } = await supabase.from("images").delete().eq("id", img.id);
+    setDeletingId(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setImages((prev) => prev.filter((i) => i.id !== img.id));
+    toast.success("Image deleted");
+  };
 
   useEffect(() => {
     (async () => {
@@ -68,15 +90,36 @@ function Dashboard() {
                     <span>{img.width}×{img.height}</span>
                     <span className="text-success">−{saved}%</span>
                   </div>
-                  <Link
-                    to="/editor"
-                    search={img.template_id ? { template: img.template_id, image: img.id } : { image: img.id }}
-                    className="block mt-2"
-                  >
-                    <Button variant="outline" size="sm" className="w-full">
-                      <Pencil className="size-3.5 mr-1.5" /> {img.template_id ? "Edit template" : "Use as template"}
-                    </Button>
-                  </Link>
+                  <div className="flex gap-2 mt-2">
+                    <Link
+                      to="/editor"
+                      search={img.template_id ? { template: img.template_id, image: img.id } : { image: img.id }}
+                      className="flex-1"
+                    >
+                      <Button variant="outline" size="sm" className="w-full">
+                        <Pencil className="size-3.5 mr-1.5" /> {img.template_id ? "Edit" : "Use as template"}
+                      </Button>
+                    </Link>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="outline" size="sm" disabled={deletingId === img.id} aria-label="Delete image">
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete this image?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            "{img.title}" will be permanently removed from your gallery and storage. This cannot be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => handleDelete(img)}>Delete</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
                 </div>
               </div>
             );
