@@ -236,7 +236,7 @@ export async function recomputeStaleTemplates(userId: string) {
       await supabaseAdmin.from("templates").update({ is_stale: true }).eq("id", t.id);
     }
   }
-  return staleCount + updatedCount;
+  return { staleCount, updatedCount, total: staleCount + updatedCount };
 }
 
 type CacheItem = { name: string | null; description: string | null; price_cents: number | null; currency: string | null };
