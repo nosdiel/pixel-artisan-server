@@ -297,3 +297,15 @@ export const setTemplateBindings = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true, count: ids.length };
   });
+
+export const deleteTemplate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ templateId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("templates")
+      .delete()
+      .eq("id", data.templateId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
