@@ -150,7 +150,8 @@ function EditorPage() {
     const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
     const refreshObject = async (obj: any): Promise<void> => {
       if (!obj || typeof obj !== "object") return;
-      const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : null;
+      const srcPath = typeof obj.src === "string" ? extractStoragePath(obj.src) : null;
+      const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : (srcPath && isVideoStoragePath(srcPath) ? srcPath : null);
       if (videoPath) {
         const { data } = await supabase.storage.from("images").createSignedUrl(videoPath, 3600);
         if (data?.signedUrl) {
@@ -160,7 +161,7 @@ function EditorPage() {
           obj.videoStoragePath = videoPath;
         }
       }
-      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : (!videoPath && typeof obj.src === "string" ? extractStoragePath(obj.src) : null);
+      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : (!videoPath ? srcPath : null);
       if (path) {
         const { data } = await supabase.storage.from("images").createSignedUrl(path, 3600);
         if (data?.signedUrl) {
