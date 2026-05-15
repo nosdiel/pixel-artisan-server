@@ -71,16 +71,37 @@ export async function fetchAllCatalog(token: string, env: string) {
 }
 
 export function flattenItem(item: SquareItem) {
-  const v = item.item_data?.variations?.[0]?.item_variation_data;
-  return {
-    square_item_id: item.id,
-    name: item.item_data?.name ?? null,
-    description: item.item_data?.description ?? null,
-    category: item.item_data?.category_id ?? null,
-    price_cents: v?.price_money?.amount ?? null,
-    currency: v?.price_money?.currency ?? "USD",
-    raw: item as unknown as Json,
-  };
+  const variations = item.item_data?.variations ?? [];
+  const baseName = item.item_data?.name ?? null;
+  const description = item.item_data?.description ?? null;
+  const category = item.item_data?.category_id ?? null;
+  // 0 or 1 variation: keep one row keyed by item id (preserves existing bindings).
+  if (variations.length <= 1) {
+    const v = variations[0]?.item_variation_data;
+    return [{
+      square_item_id: item.id,
+      name: baseName,
+      description,
+      category,
+      price_cents: v?.price_money?.amount ?? null,
+      currency: v?.price_money?.currency ?? "USD",
+      raw: item as unknown as Json,
+    }];
+  }
+  // Multiple variations: emit one row per variation with synthetic id `${itemId}:${variationId}`.
+  return variations.map((variation) => {
+    const v = variation.item_variation_data;
+    const variationName = v?.name?.trim() || "Default";
+    return {
+      square_item_id: `${item.id}:${variation.id}`,
+      name: baseName ? `${baseName} — ${variationName}` : variationName,
+      description,
+      category,
+      price_cents: v?.price_money?.amount ?? null,
+      currency: v?.price_money?.currency ?? "USD",
+      raw: { ...(item as unknown as Record<string, unknown>), _variation_id: variation.id } as unknown as Json,
+    };
+  });
 }
 
 function uniqueBySquareItemId<T extends { square_item_id: string }>(rows: T[]) {
@@ -104,7 +125,7 @@ export async function fetchSourcePage(conn: ConnectionSource, cursor?: string) {
   }
   if (!conn.access_token) throw new Error("Square access token is not set");
   const page = await fetchCatalogPage(conn.access_token, conn.environment, cursor);
-  return { items: page.items.map(flattenItem), cursor: page.cursor };
+  return { items: page.items.flatMap(flattenItem), cursor: page.cursor };
 }
 
 /** Run sync + stale detection for a single user, using the admin client. */
