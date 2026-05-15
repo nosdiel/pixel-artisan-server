@@ -11,7 +11,10 @@ import { toast } from "sonner";
 
 type ImageRow = { id: string; slug: string; title: string; width: number; height: number; optimized_size_bytes: number; original_size_bytes: number; variants: { format: string; path: string }[]; created_at: string; template_id: string | null };
 
-export const Route = createFileRoute("/_authenticated/dashboard")({ component: Dashboard });
+export const Route = createFileRoute("/_authenticated/dashboard")({
+  component: Dashboard,
+  ssr: false,
+});
 
 function Dashboard() {
   const [images, setImages] = useState<ImageRow[]>([]);
