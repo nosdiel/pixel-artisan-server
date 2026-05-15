@@ -62,6 +62,40 @@ function extractStoragePath(src: string) {
   }
 }
 
+const TRANSPARENT_VIDEO_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const VIDEO_STORAGE_EXT_RE = /\.(mp4|mov|m4v|webm|ogg|ogv)(?:$|[?#])/i;
+
+function isVideoStoragePath(path: string) {
+  return VIDEO_STORAGE_EXT_RE.test(path);
+}
+
+function getFabricObjectSrc(obj: any): string | null {
+  const direct = typeof obj?.src === "string" ? obj.src : null;
+  const fromGetter = typeof obj?.getSrc === "function" ? obj.getSrc() : null;
+  const el = typeof obj?.getElement === "function" ? obj.getElement() : null;
+  const fromElement = el instanceof HTMLVideoElement || el instanceof HTMLImageElement ? el.currentSrc || el.src : null;
+  return direct || fromGetter || fromElement || null;
+}
+
+function patchSerializedMedia(serializedObjects: any[] | undefined, liveObjects: any[] | undefined) {
+  if (!Array.isArray(serializedObjects) || !Array.isArray(liveObjects)) return;
+  serializedObjects.forEach((serialized, index) => {
+    const live = liveObjects[index];
+    if (!serialized || !live) return;
+    const src = getFabricObjectSrc(live) || (typeof serialized.src === "string" ? serialized.src : null);
+    const storedVideoPath = typeof live.videoStoragePath === "string" ? live.videoStoragePath : null;
+    const extractedPath = src ? extractStoragePath(src) : null;
+    const videoPath = storedVideoPath || (extractedPath && isVideoStoragePath(extractedPath) ? extractedPath : null);
+    if (videoPath) {
+      serialized.videoStoragePath = videoPath;
+      delete serialized.imageStoragePath;
+      serialized.src = TRANSPARENT_VIDEO_PLACEHOLDER;
+      serialized.crossOrigin = "anonymous";
+    }
+    patchSerializedMedia(serialized.objects ?? serialized._objects, live.getObjects?.() ?? live._objects);
+  });
+}
+
 function presetForImage(width: number, height: number) {
   const exact = Object.entries(PRESETS).find(([, size]) => size.w === width && size.h === height)?.[0];
   if (exact) return exact;
@@ -116,16 +150,18 @@ function EditorPage() {
     const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
     const refreshObject = async (obj: any): Promise<void> => {
       if (!obj || typeof obj !== "object") return;
-      const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : null;
+      const srcPath = typeof obj.src === "string" ? extractStoragePath(obj.src) : null;
+      const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : (srcPath && isVideoStoragePath(srcPath) ? srcPath : null);
       if (videoPath) {
         const { data } = await supabase.storage.from("images").createSignedUrl(videoPath, 3600);
         if (data?.signedUrl) {
-          obj.src = data.signedUrl;
+          obj.videoSrc = data.signedUrl;
+          obj.src = TRANSPARENT_VIDEO_PLACEHOLDER;
           obj.crossOrigin = "anonymous";
           obj.videoStoragePath = videoPath;
         }
       }
-      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : (!videoPath && typeof obj.src === "string" ? extractStoragePath(obj.src) : null);
+      const path = !videoPath ? (typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : srcPath) : null;
       if (path) {
         const { data } = await supabase.storage.from("images").createSignedUrl(path, 3600);
         if (data?.signedUrl) {
@@ -397,10 +433,13 @@ function EditorPage() {
         await fc.loadFromJSON(pendingCanvasJson as object);
         // Rehydrate any video layers (loadFromJSON only restores them as still images)
         if (fabric) {
-          for (const obj of fc.getObjects()) {
-            const vp = (obj as any).videoStoragePath as string | undefined;
-            const src = (obj as any).getSrc?.() as string | undefined;
+          const savedObjects = ((pendingCanvasJson as any).objects ?? []) as any[];
+          for (const [index, obj] of fc.getObjects().entries()) {
+            const savedVideo = savedObjects[index]?.videoStoragePath ? { path: savedObjects[index].videoStoragePath, src: savedObjects[index].videoSrc } : undefined;
+            const vp = ((obj as any).videoStoragePath || savedVideo?.path) as string | undefined;
+            const src = ((obj as any).videoSrc || savedVideo?.src || (obj as any).getSrc?.()) as string | undefined;
             if (!vp || !src || !(obj instanceof fabric.FabricImage)) continue;
+            (obj as any).set("videoStoragePath", vp);
             try {
               const video = document.createElement("video");
               video.src = src;
@@ -558,7 +597,9 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath", "squareBinding", "videoStoragePath"]));
+    const canvasJson = (fc as any).toJSON(["imageStoragePath", "squareBinding", "videoStoragePath"]);
+    patchSerializedMedia(canvasJson.objects, fc.getObjects());
+    const json = JSON.stringify(canvasJson);
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(json);
@@ -783,6 +824,7 @@ function EditorPage() {
       fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
       const canvasJson = (fc as any).toJSON(["imageStoragePath", "squareBinding", "videoStoragePath"]);
+      patchSerializedMedia(canvasJson.objects, fc.getObjects());
       fc.setZoom(prevZoom);
       fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
 
