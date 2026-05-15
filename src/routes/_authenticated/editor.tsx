@@ -100,6 +100,7 @@ function EditorPage() {
   const [customFonts, setCustomFonts] = useState<string[]>([]);
   const [uploadingFont, setUploadingFont] = useState(false);
   const fontInputRef = useRef<HTMLInputElement>(null);
+  const [squareItems, setSquareItems] = useState<SquareCacheItem[]>([]);
   const navigate = useNavigate();
 
   const getFitZoom = useCallback((presetKey = preset) => {
