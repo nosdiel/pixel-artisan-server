@@ -34,19 +34,34 @@ const PRESETS: Record<string, { w: number; h: number; label: string }> = {
 const FONTS = ["Inter", "Arial", "Georgia", "Times New Roman", "Courier New", "Impact", "Comic Sans MS", "Verdana"];
 const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
 
-type Asset = { id: string; title: string; url: string };
+type Asset = { id: string; title: string; url: string; path: string };
+type PendingBaseImage = { url: string; path: string };
+type GalleryImageRow = { id: string; title: string; preset: string | null; width: number; height: number; variants: Array<{ path: string; format: string }> | null };
 type FabricModule = typeof import("fabric");
+
+function extractStoragePath(src: string) {
+  try {
+    const url = new URL(src);
+    const markers = ["/storage/v1/object/sign/images/", "/storage/v1/object/public/images/"];
+    const marker = markers.find((m) => url.pathname.includes(m));
+    if (!marker) return null;
+    return decodeURIComponent(url.pathname.slice(url.pathname.indexOf(marker) + marker.length));
+  } catch {
+    return null;
+  }
+}
 
 export const Route = createFileRoute("/_authenticated/editor")({
   component: EditorPage,
   ssr: false,
   validateSearch: (s: Record<string, unknown>) => ({
     template: typeof s.template === "string" ? s.template : undefined,
+    image: typeof s.image === "string" ? s.image : undefined,
   }),
 });
 
 function EditorPage() {
-  const { template: templateIdParam } = Route.useSearch();
+  const { template: templateIdParam, image: imageIdParam } = Route.useSearch();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
   const historyRef = useRef<{ stack: string[]; index: number; suspend: boolean }>({ stack: [], index: -1, suspend: false });
@@ -62,7 +77,61 @@ function EditorPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(templateIdParam ?? null);
   const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
+  const [pendingBaseImage, setPendingBaseImage] = useState<PendingBaseImage | null>(null);
   const navigate = useNavigate();
+
+  const withFreshImageUrls = useCallback(async (canvasJson: unknown) => {
+    const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
+    const refreshObject = async (obj: any): Promise<void> => {
+      if (!obj || typeof obj !== "object") return;
+      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : typeof obj.src === "string" ? extractStoragePath(obj.src) : null;
+      if (path) {
+        const { data } = await supabase.storage.from("images").createSignedUrl(path, 3600);
+        if (data?.signedUrl) {
+          obj.src = data.signedUrl;
+          obj.crossOrigin = "anonymous";
+          obj.imageStoragePath = path;
+        }
+      }
+      await Promise.all(((obj.objects ?? obj._objects ?? []) as any[]).map(refreshObject));
+      if (obj.clipPath) await refreshObject(obj.clipPath);
+    };
+    await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
+    if (json.backgroundImage) await refreshObject(json.backgroundImage);
+    return json;
+  }, []);
+
+  const loadGalleryImageAsTemplate = useCallback(async (imageId: string) => {
+    const { data, error } = await supabase
+      .from("images")
+      .select("id, title, preset, width, height, variants")
+      .eq("id", imageId)
+      .maybeSingle();
+    if (error || !data) {
+      toast.error("Could not load image");
+      return;
+    }
+    const image = data as GalleryImageRow;
+    setTitle(image.title || "Untitled");
+    if (image.preset && PRESETS[image.preset]) setPreset(image.preset);
+    else {
+      const matchedPreset = Object.entries(PRESETS).find(([, size]) => size.w === image.width && size.h === image.height)?.[0];
+      if (matchedPreset) setPreset(matchedPreset);
+    }
+    const variant = image.variants?.[0];
+    if (!variant?.path) {
+      toast.error("This image has no stored file to reuse");
+      return;
+    }
+    const { data: signed, error: signError } = await supabase.storage.from("images").createSignedUrl(variant.path, 3600);
+    if (signError || !signed?.signedUrl) {
+      toast.error("Could not prepare image for editing");
+      return;
+    }
+    setTemplateId(null);
+    setPendingCanvasJson(null);
+    setPendingBaseImage({ url: signed.signedUrl, path: variant.path });
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -82,7 +151,11 @@ function EditorPage() {
         .eq("id", templateIdParam)
         .maybeSingle();
       if (error || !data) {
-        toast.error("Could not load template");
+        if (imageIdParam) {
+          await loadGalleryImageAsTemplate(imageIdParam);
+        } else {
+          toast.error("Could not load template");
+        }
         return;
       }
       setTemplateId(data.id);
@@ -92,9 +165,15 @@ function EditorPage() {
       if (cj && typeof cj === "object" && typeof cj.background === "string") {
         setBgColor(cj.background);
       }
-      setPendingCanvasJson(data.canvas_json ?? null);
+      setPendingCanvasJson(data.canvas_json ? await withFreshImageUrls(data.canvas_json) : null);
     })();
-  }, [templateIdParam]);
+  }, [templateIdParam, imageIdParam, loadGalleryImageAsTemplate, withFreshImageUrls]);
+
+  // Fall back to the rendered gallery image when the row has no editable template yet
+  useEffect(() => {
+    if (!imageIdParam || templateIdParam) return;
+    void loadGalleryImageAsTemplate(imageIdParam);
+  }, [imageIdParam, templateIdParam, loadGalleryImageAsTemplate]);
 
   // Initialize canvas
   useEffect(() => {
@@ -139,6 +218,40 @@ function EditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCanvasJson, fabric, preset]);
 
+  // Convert a gallery image into an editable canvas layer when no template JSON exists
+  useEffect(() => {
+    const fc = fcRef.current;
+    if (!fc || !fabric || !pendingBaseImage) return;
+    historyRef.current.suspend = true;
+    (async () => {
+      try {
+        fc.clear();
+        fc.backgroundColor = bgColor;
+        const img = await fabric.FabricImage.fromURL(pendingBaseImage.url, { crossOrigin: "anonymous" });
+        const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!, 1);
+        img.scale(scale);
+        img.set({
+          left: (fc.width! - img.width! * scale) / 2,
+          top: (fc.height! - img.height! * scale) / 2,
+          selectable: true,
+          imageStoragePath: pendingBaseImage.path,
+        });
+        fc.add(img);
+        fc.setActiveObject(img);
+        fc.renderAll();
+      } catch {
+        toast.error("Could not place image on canvas");
+      } finally {
+        historyRef.current.suspend = false;
+        historyRef.current = { stack: [], index: -1, suspend: false };
+        pushHistory();
+        setPendingBaseImage(null);
+        refresh();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingBaseImage, fabric, preset]);
+
   // Apply zoom
   useEffect(() => {
     const fc = fcRef.current;
@@ -172,7 +285,7 @@ function EditorPage() {
       const v = variants[0];
       if (!v) continue;
       const { data: signed } = await supabase.storage.from("images").createSignedUrl(v.path, 3600);
-      if (signed?.signedUrl) out.push({ id: row.id, title: row.title, url: signed.signedUrl });
+      if (signed?.signedUrl) out.push({ id: row.id, title: row.title, url: signed.signedUrl, path: v.path });
     }
     setAssets(out);
   };
@@ -181,7 +294,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const json = JSON.stringify(fc.toJSON());
+    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath"]));
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(json);
@@ -204,19 +317,29 @@ function EditorPage() {
   };
 
   // Add helpers
-  const addImageFromUrl = async (url: string) => {
+  const addImageFromUrl = async (url: string, path?: string) => {
     const fc = fcRef.current; if (!fc || !fabric) return;
     const img = await fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
     const scale = Math.min(max / img.width!, max / img.height!, 1);
     img.scale(scale);
     img.set({ left: (fc.width! - img.width! * scale) / 2, top: (fc.height! - img.height! * scale) / 2 });
+    if (path) img.set("imageStoragePath", path);
     fc.add(img); fc.setActiveObject(img); fc.renderAll();
   };
   const onUploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
-    const url = URL.createObjectURL(file);
-    await addImageFromUrl(url);
+    const { data: ud } = await supabase.auth.getUser();
+    if (!ud.user) return;
+    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+    const path = `${ud.user.id}/editor-assets/${nanoid(10)}.${ext}`;
+    const { error } = await supabase.storage.from("images").upload(path, file, { contentType: file.type, upsert: true });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    const { data: signed } = await supabase.storage.from("images").createSignedUrl(path, 3600);
+    await addImageFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
     e.target.value = "";
   };
   const addText = () => {
@@ -268,7 +391,7 @@ function EditorPage() {
       fc.setZoom(1);
       fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = fc.toJSON();
+      const canvasJson = (fc as any).toJSON(["imageStoragePath"]);
       fc.setZoom(prevZoom);
       fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
 
@@ -382,7 +505,7 @@ function EditorPage() {
               <div className="grid grid-cols-2 gap-2 px-1">
                 {assets.length === 0 && <p className="col-span-2 text-xs text-muted-foreground text-center py-6">No saved images yet</p>}
                 {assets.map((asset) => (
-                  <button key={asset.id} onClick={() => addImageFromUrl(asset.url)} className="group relative aspect-square rounded overflow-hidden border border-border hover:border-primary">
+                  <button key={asset.id} onClick={() => addImageFromUrl(asset.url, asset.path)} className="group relative aspect-square rounded overflow-hidden border border-border hover:border-primary">
                     <img src={asset.url} alt={asset.title} className="size-full object-cover" />
                   </button>
                 ))}
