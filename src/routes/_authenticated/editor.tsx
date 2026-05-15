@@ -931,6 +931,63 @@ function EditorPage() {
                   <ToggleGroupItem value="center"><AlignCenter className="size-4" /></ToggleGroupItem>
                   <ToggleGroupItem value="right"><AlignRight className="size-4" /></ToggleGroupItem>
                 </ToggleGroup>
+                <Separator />
+                <div className="space-y-2">
+                  <Label className="text-xs flex items-center gap-1.5"><Tag className="size-3" /> Square binding</Label>
+                  {squareItems.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground">No cached items. Sync your Square catalog from the Templates page first.</p>
+                  ) : (
+                    <>
+                      <Select
+                        value={((a as any).squareBinding as SquareBinding | undefined)?.itemId ?? "__none__"}
+                        onValueChange={(v) => update(() => {
+                          if (v === "__none__") {
+                            delete (a as any).squareBinding;
+                            return;
+                          }
+                          const prev = ((a as any).squareBinding as SquareBinding | undefined);
+                          const field: SquareField = prev?.field ?? "price";
+                          (a as any).squareBinding = { itemId: v, field } as SquareBinding;
+                          const item = squareItems.find((s) => s.square_item_id === v);
+                          const next = formatSquareValue(item, field);
+                          if (next) (a as Fabric.IText).set("text", next);
+                        })}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Bind to item…" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">— Not bound —</SelectItem>
+                          {squareItems.map((it) => (
+                            <SelectItem key={it.square_item_id} value={it.square_item_id}>
+                              {it.name ?? it.square_item_id}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {((a as any).squareBinding as SquareBinding | undefined) && (
+                        <Select
+                          value={((a as any).squareBinding as SquareBinding).field}
+                          onValueChange={(v) => update(() => {
+                            const b = (a as any).squareBinding as SquareBinding;
+                            b.field = v as SquareField;
+                            const item = squareItems.find((s) => s.square_item_id === b.itemId);
+                            const next = formatSquareValue(item, b.field);
+                            if (next) (a as Fabric.IText).set("text", next);
+                          })}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="price">Price</SelectItem>
+                            <SelectItem value="name">Name</SelectItem>
+                            <SelectItem value="description">Description</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                      <p className="text-[11px] text-muted-foreground">
+                        Text auto-updates when you sync Square or click Refresh prices.
+                      </p>
+                    </>
+                  )}
+                </div>
               </>
             )}
 
