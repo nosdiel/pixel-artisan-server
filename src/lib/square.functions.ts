@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { syncUserCatalog, fetchCatalogPage, flattenItem, recomputeStaleTemplates } from "./square-sync.server";
+import { syncUserCatalog, fetchSourcePage, recomputeStaleTemplates } from "./square-sync.server";
+import { fetchOnlineSiteCatalog } from "./square-online.server";
 
 export const syncSquareCatalog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -9,11 +10,11 @@ export const syncSquareCatalog = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const { data: conn, error: connErr } = await supabase
       .from("square_connections")
-      .select("access_token, environment")
+      .select("source, access_token, environment, site_url")
       .maybeSingle();
     if (connErr) throw new Error(connErr.message);
     if (!conn) throw new Error("Square is not connected. Add a token in Settings first.");
-    return syncUserCatalog(userId, conn.access_token, conn.environment);
+    return syncUserCatalog(userId, conn);
   });
 
 /** Start a background sync job: cancel any running job, wipe cache, return new job id. */
@@ -23,9 +24,9 @@ export const startSquareSyncJob = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const { data: conn } = await supabase
       .from("square_connections")
-      .select("access_token, environment")
+      .select("source, access_token, environment, site_url")
       .maybeSingle();
-    if (!conn) throw new Error("Square is not connected. Add a token in Settings first.");
+    if (!conn) throw new Error("Square is not connected. Configure it in Settings first.");
 
     // Mark any prior running job for this user as cancelled
     await supabase
@@ -63,13 +64,13 @@ export const stepSquareSyncJob = createServerFn({ method: "POST" })
 
     const { data: conn } = await supabase
       .from("square_connections")
-      .select("access_token, environment")
+      .select("source, access_token, environment, site_url")
       .maybeSingle();
     if (!conn) throw new Error("Square connection missing");
 
     try {
-      const { items, cursor } = await fetchCatalogPage(conn.access_token, conn.environment, job.cursor ?? undefined);
-      const flat = items.map((it) => ({ ...flattenItem(it), user_id: userId }));
+      const { items, cursor } = await fetchSourcePage(conn, job.cursor ?? undefined);
+      const flat = items.map((it) => ({ ...it, user_id: userId }));
       if (flat.length) {
         const { error: insErr } = await supabase.from("square_items_cache").insert(flat);
         if (insErr) throw new Error(insErr.message);
@@ -153,9 +154,54 @@ export const getSquareConnection = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data } = await context.supabase
       .from("square_connections")
-      .select("environment, last_sync_at, auto_sync_enabled, merchant_id")
+      .select("source, environment, site_url, last_sync_at, auto_sync_enabled, merchant_id")
       .maybeSingle();
     return { connection: data };
+  });
+
+export const saveSquareConnection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.discriminatedUnion("source", [
+      z.object({
+        source: z.literal("api"),
+        environment: z.enum(["production", "sandbox"]),
+        access_token: z.string().min(4).max(2000),
+      }),
+      z.object({
+        source: z.literal("online_site"),
+        site_url: z.string().url().max(500),
+      }),
+    ]).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    if (data.source === "online_site") {
+      // Validate the URL up front so users get an immediate error instead of one at first sync.
+      try {
+        await fetchOnlineSiteCatalog(data.site_url);
+      } catch (e) {
+        throw new Error(e instanceof Error ? e.message : String(e));
+      }
+    }
+    const row =
+      data.source === "api"
+        ? {
+            user_id: context.userId,
+            source: "api",
+            access_token: data.access_token,
+            environment: data.environment,
+            site_url: null,
+          }
+        : {
+            user_id: context.userId,
+            source: "online_site",
+            access_token: null,
+            environment: "production",
+            site_url: data.site_url,
+          };
+    const { error } = await context.supabase.from("square_connections").upsert(row);
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
 
 export const listSquareItems = createServerFn({ method: "GET" })
