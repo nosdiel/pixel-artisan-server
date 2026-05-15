@@ -444,10 +444,12 @@ function EditorPage() {
         await fc.loadFromJSON(pendingCanvasJson as object);
         // Rehydrate any video layers (loadFromJSON only restores them as still images)
         if (fabric) {
-          for (const obj of fc.getObjects()) {
+          const savedVideos = collectSerializedVideoSources((pendingCanvasJson as any).objects);
+          for (const [index, obj] of fc.getObjects().entries()) {
+            const savedVideo = savedVideos[index];
             const vp = (obj as any).videoStoragePath as string | undefined;
-            const src = ((obj as any).videoSrc || (obj as any).getSrc?.()) as string | undefined;
-            if (!vp || !src || !(obj instanceof fabric.FabricImage)) continue;
+            const src = ((obj as any).videoSrc || savedVideo?.src || (obj as any).getSrc?.()) as string | undefined;
+            if (!vp || !src || !savedVideo || savedVideo.path !== vp || !(obj instanceof fabric.FabricImage)) continue;
             try {
               const video = document.createElement("video");
               video.src = src;
