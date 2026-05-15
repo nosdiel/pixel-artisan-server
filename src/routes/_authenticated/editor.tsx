@@ -1,16 +1,26 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as fabric from "fabric";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { supabase } from "@/integrations/supabase/client";
 import { autoCompress } from "@/lib/compress";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
-import { Upload, Type, Square as SquareIcon, Circle as CircleIcon, RotateCw, FlipHorizontal, FlipVertical, Save, Trash2 } from "lucide-react";
+import {
+  Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
+  RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
+  ArrowUp, ArrowDown, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2,
+  Image as ImageIcon, Layers, Eye, EyeOff, Bold, Italic, Underline,
+  AlignLeft, AlignCenter, AlignRight, Plus,
+} from "lucide-react";
 
 const PRESETS: Record<string, { w: number; h: number; label: string }> = {
   "1920x1080": { w: 1920, h: 1080, label: "1080p Landscape" },
@@ -18,85 +28,186 @@ const PRESETS: Record<string, { w: number; h: number; label: string }> = {
   "1080x1920": { w: 1080, h: 1920, label: "1080p Portrait" },
   "2160x3840": { w: 2160, h: 3840, label: "4K Portrait" },
   "1280x720":  { w: 1280, h: 720,  label: "720p Landscape" },
+  "1080x1080": { w: 1080, h: 1080, label: "Square 1:1" },
 };
+
+const FONTS = ["Inter", "Arial", "Georgia", "Times New Roman", "Courier New", "Impact", "Comic Sans MS", "Verdana"];
+const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
+
+type Asset = { id: string; title: string; url: string };
 
 export const Route = createFileRoute("/_authenticated/editor")({ component: EditorPage });
 
 function EditorPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fcRef = useRef<fabric.Canvas | null>(null);
+  const historyRef = useRef<{ stack: string[]; index: number; suspend: boolean }>({ stack: [], index: -1, suspend: false });
   const [preset, setPreset] = useState("1920x1080");
   const [title, setTitle] = useState("Untitled");
-  const [brightness, setBrightness] = useState(0);
-  const [contrast, setContrast] = useState(0);
+  const [bgColor, setBgColor] = useState("#ffffff");
+  const [zoom, setZoom] = useState(0.4);
+  const [active, setActive] = useState<fabric.Object | null>(null);
+  const [, forceUpdate] = useState(0);
+  const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
   const [saving, setSaving] = useState(false);
-  const [bgImg, setBgImg] = useState<fabric.FabricImage | null>(null);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const navigate = useNavigate();
 
+  // Initialize canvas
   useEffect(() => {
     if (!canvasRef.current) return;
     const { w, h } = PRESETS[preset];
-    const fc = new fabric.Canvas(canvasRef.current, {
-      width: w, height: h, backgroundColor: "#ffffff",
-    });
+    const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
-    return () => { fc.dispose(); fcRef.current = null; };
+    fc.setZoom(zoom);
+    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
+
+    const onSel = () => { setActive(fc.getActiveObject() ?? null); refresh(); };
+    const onMod = () => { pushHistory(); refresh(); };
+    fc.on("selection:created", onSel);
+    fc.on("selection:updated", onSel);
+    fc.on("selection:cleared", onSel);
+    fc.on("object:modified", onMod);
+    fc.on("object:added", onMod);
+    fc.on("object:removed", onMod);
+
+    pushHistory();
+    return () => { fc.dispose(); fcRef.current = null; historyRef.current = { stack: [], index: -1, suspend: false }; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset]);
 
-  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !fcRef.current) return;
-    const url = URL.createObjectURL(file);
-    const img = await fabric.FabricImage.fromURL(url);
-    const fc = fcRef.current;
-    const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!);
-    img.scale(scale);
-    img.set({ left: (fc.width! - img.width! * scale) / 2, top: (fc.height! - img.height! * scale) / 2 });
-    fc.add(img);
-    setBgImg(img);
-    fc.renderAll();
-  };
-
-  const addText = () => {
-    const t = new fabric.IText("Your text", { left: 100, top: 100, fontSize: 64, fill: "#111827", fontFamily: "Inter, sans-serif" });
-    fcRef.current?.add(t);
-    fcRef.current?.setActiveObject(t);
-  };
-  const addRect = () => {
-    const r = new fabric.Rect({ left: 100, top: 100, width: 300, height: 200, fill: "#3b82f6" });
-    fcRef.current?.add(r);
-  };
-  const addCircle = () => {
-    const c = new fabric.Circle({ left: 100, top: 100, radius: 100, fill: "#a855f7" });
-    fcRef.current?.add(c);
-  };
-  const rotate = () => { const o = fcRef.current?.getActiveObject(); if (o) { o.rotate(((o.angle || 0) + 90) % 360); fcRef.current?.renderAll(); } };
-  const flipH = () => { const o = fcRef.current?.getActiveObject() as fabric.FabricImage | undefined; if (o) { o.set("flipX", !o.flipX); fcRef.current?.renderAll(); } };
-  const flipV = () => { const o = fcRef.current?.getActiveObject() as fabric.FabricImage | undefined; if (o) { o.set("flipY", !o.flipY); fcRef.current?.renderAll(); } };
-  const remove = () => { const o = fcRef.current?.getActiveObject(); if (o) { fcRef.current?.remove(o); } };
-
-  const applyFilters = () => {
-    if (!bgImg) return;
-    bgImg.filters = [
-      new fabric.filters.Brightness({ brightness: brightness / 100 }),
-      new fabric.filters.Contrast({ contrast: contrast / 100 }),
-    ];
-    bgImg.applyFilters();
-    fcRef.current?.renderAll();
-  };
-  useEffect(() => { applyFilters(); /* eslint-disable-next-line */ }, [brightness, contrast]);
-
-  const onSave = async () => {
+  // Apply zoom
+  useEffect(() => {
     const fc = fcRef.current;
     if (!fc) return;
+    const { w, h } = PRESETS[preset];
+    fc.setZoom(zoom);
+    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
+    fc.requestRenderAll();
+  }, [zoom, preset]);
+
+  // Apply bg color
+  useEffect(() => {
+    const fc = fcRef.current;
+    if (!fc) return;
+    fc.backgroundColor = bgColor;
+    fc.requestRenderAll();
+    pushHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgColor]);
+
+  // Load asset library
+  useEffect(() => { void loadAssets(); }, []);
+  const loadAssets = async () => {
+    const { data: ud } = await supabase.auth.getUser();
+    if (!ud.user) return;
+    const { data } = await supabase.from("images").select("id, title, variants").eq("user_id", ud.user.id).order("created_at", { ascending: false }).limit(50);
+    if (!data) return;
+    const out: Asset[] = [];
+    for (const row of data) {
+      const variants = (row.variants as Array<{ path: string; format: string }>) || [];
+      const v = variants[0];
+      if (!v) continue;
+      const { data: signed } = await supabase.storage.from("images").createSignedUrl(v.path, 3600);
+      if (signed?.signedUrl) out.push({ id: row.id, title: row.title, url: signed.signedUrl });
+    }
+    setAssets(out);
+  };
+
+  // History
+  const pushHistory = () => {
+    const fc = fcRef.current;
+    if (!fc || historyRef.current.suspend) return;
+    const json = JSON.stringify(fc.toJSON(["selectable", "evented"]));
+    const h = historyRef.current;
+    h.stack = h.stack.slice(0, h.index + 1);
+    h.stack.push(json);
+    if (h.stack.length > 50) h.stack.shift();
+    h.index = h.stack.length - 1;
+  };
+  const undo = async () => {
+    const h = historyRef.current; const fc = fcRef.current;
+    if (!fc || h.index <= 0) return;
+    h.index -= 1; h.suspend = true;
+    await fc.loadFromJSON(h.stack[h.index]); fc.renderAll();
+    h.suspend = false; refresh();
+  };
+  const redo = async () => {
+    const h = historyRef.current; const fc = fcRef.current;
+    if (!fc || h.index >= h.stack.length - 1) return;
+    h.index += 1; h.suspend = true;
+    await fc.loadFromJSON(h.stack[h.index]); fc.renderAll();
+    h.suspend = false; refresh();
+  };
+
+  // Add helpers
+  const addImageFromUrl = async (url: string) => {
+    const fc = fcRef.current; if (!fc) return;
+    const img = await fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
+    const scale = Math.min(max / img.width!, max / img.height!, 1);
+    img.scale(scale);
+    img.set({ left: (fc.width! - img.width! * scale) / 2, top: (fc.height! - img.height! * scale) / 2 });
+    fc.add(img); fc.setActiveObject(img); fc.renderAll();
+  };
+  const onUploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const url = URL.createObjectURL(file);
+    await addImageFromUrl(url);
+    e.target.value = "";
+  };
+  const addText = () => {
+    const fc = fcRef.current; if (!fc) return;
+    const t = new fabric.IText("Your text", {
+      left: fc.width! / 2 - 200, top: fc.height! / 2 - 40, fontSize: 80, fill: "#111827",
+      fontFamily: "Inter", originX: "left", originY: "top",
+    });
+    fc.add(t); fc.setActiveObject(t); fc.renderAll();
+  };
+  const addShape = (kind: "rect" | "circle" | "triangle") => {
+    const fc = fcRef.current; if (!fc) return;
+    const common = { left: fc.width! / 2 - 150, top: fc.height! / 2 - 150, fill: "#3b82f6" };
+    let o: fabric.Object;
+    if (kind === "rect") o = new fabric.Rect({ ...common, width: 300, height: 200 });
+    else if (kind === "circle") o = new fabric.Circle({ ...common, radius: 120 });
+    else o = new fabric.Triangle({ ...common, width: 240, height: 240 });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+
+  // Active-object actions
+  const a = active;
+  const update = (fn: () => void) => { fn(); fcRef.current?.renderAll(); pushHistory(); refresh(); };
+  const remove = () => { const fc = fcRef.current; const o = fc?.getActiveObject(); if (fc && o) { fc.remove(o); fc.discardActiveObject(); fc.renderAll(); }};
+  const duplicate = async () => {
+    const fc = fcRef.current; const o = fc?.getActiveObject(); if (!fc || !o) return;
+    const c = await o.clone(); c.set({ left: (o.left ?? 0) + 30, top: (o.top ?? 0) + 30 }); fc.add(c); fc.setActiveObject(c); fc.renderAll();
+  };
+  const bringForward = () => { const fc = fcRef.current; const o = fc?.getActiveObject(); if (fc && o) { fc.bringObjectForward(o); fc.renderAll(); pushHistory(); refresh(); }};
+  const sendBackward = () => { const fc = fcRef.current; const o = fc?.getActiveObject(); if (fc && o) { fc.sendObjectBackwards(o); fc.renderAll(); pushHistory(); refresh(); }};
+  const rotate = () => { if (a) update(() => a.rotate(((a.angle || 0) + 90) % 360)); };
+  const flipH = () => { if (a) update(() => a.set("flipX", !a.flipX)); };
+  const flipV = () => { if (a) update(() => a.set("flipY", !a.flipY)); };
+
+  const isText = a instanceof fabric.IText || a instanceof fabric.Textbox;
+  const isImage = a instanceof fabric.FabricImage;
+  const objects = fcRef.current?.getObjects() ?? [];
+
+  const onSave = async () => {
+    const fc = fcRef.current; if (!fc) return;
     setSaving(true);
     try {
+      fc.discardActiveObject();
+      const prevZoom = fc.getZoom();
+      fc.setZoom(1);
+      fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
+      fc.setZoom(prevZoom);
+      fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
+
       const blob = await (await fetch(dataUrl)).blob();
       const { best, variants, originalSize, width, height } = await autoCompress(blob);
-
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData.user!.id;
+      const { data: ud } = await supabase.auth.getUser();
+      const userId = ud.user!.id;
       const slug = nanoid(10);
       const baseFolder = `${userId}/${slug}`;
       const variantRecords: { format: string; path: string; size: number; quality: number }[] = [];
@@ -106,82 +217,250 @@ function EditorPage() {
         if (error) throw error;
         variantRecords.push({ format: v.format, path, size: v.size, quality: v.quality });
       }
-      // sort so best is first
-      variantRecords.sort((a, b) => a.size - b.size);
-
+      variantRecords.sort((x, y) => x.size - y.size);
       const { error: insErr } = await supabase.from("images").insert({
         user_id: userId, slug, title, width, height,
-        original_size_bytes: originalSize,
-        optimized_size_bytes: best.size,
-        variants: variantRecords,
-        preset, source: "editor",
+        original_size_bytes: originalSize, optimized_size_bytes: best.size,
+        variants: variantRecords, preset, source: "editor",
       });
       if (insErr) throw insErr;
       toast.success(`Saved! Compressed ${Math.round((1 - best.size / originalSize) * 100)}%`);
       navigate({ to: "/dashboard" });
     } catch (e: any) {
       toast.error(e.message || "Save failed");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   return (
-    <div className="flex h-screen">
-      <div className="w-72 border-r border-border bg-card p-4 space-y-5 overflow-y-auto">
-        <h2 className="font-semibold text-lg">Editor</h2>
-        <div>
-          <Label>Title</Label>
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
+    <div className="flex h-screen bg-muted/30">
+      {/* LEFT PANEL */}
+      <div className="w-72 border-r border-border bg-card flex flex-col">
+        <div className="p-3 border-b border-border">
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Untitled" className="font-medium" />
         </div>
-        <div>
-          <Label>Signage preset</Label>
-          <Select value={preset} onValueChange={setPreset}>
-            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-            <SelectContent>{Object.entries(PRESETS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label} ({v.w}×{v.h})</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label>Background image</Label>
-          <label className="mt-1 flex items-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-sm cursor-pointer hover:bg-accent">
-            <Upload className="size-4" /> Upload image
-            <input type="file" accept="image/*" className="hidden" onChange={onUpload} />
-          </label>
-        </div>
-        <div className="space-y-2">
-          <Label>Add</Label>
-          <div className="grid grid-cols-3 gap-2">
-            <Button variant="outline" size="sm" onClick={addText}><Type className="size-4" /></Button>
-            <Button variant="outline" size="sm" onClick={addRect}><SquareIcon className="size-4" /></Button>
-            <Button variant="outline" size="sm" onClick={addCircle}><CircleIcon className="size-4" /></Button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <Label>Transform</Label>
-          <div className="grid grid-cols-3 gap-2">
-            <Button variant="outline" size="sm" onClick={rotate}><RotateCw className="size-4" /></Button>
-            <Button variant="outline" size="sm" onClick={flipH}><FlipHorizontal className="size-4" /></Button>
-            <Button variant="outline" size="sm" onClick={flipV}><FlipVertical className="size-4" /></Button>
-          </div>
-          <Button variant="outline" size="sm" className="w-full" onClick={remove}><Trash2 className="size-4 mr-1" /> Delete selected</Button>
-        </div>
-        <div>
-          <Label>Brightness ({brightness})</Label>
-          <Slider min={-100} max={100} step={1} value={[brightness]} onValueChange={(v) => setBrightness(v[0])} className="mt-2" />
-        </div>
-        <div>
-          <Label>Contrast ({contrast})</Label>
-          <Slider min={-100} max={100} step={1} value={[contrast]} onValueChange={(v) => setContrast(v[0])} className="mt-2" />
-        </div>
-        <Button className="w-full" onClick={onSave} disabled={saving}>
-          <Save className="size-4 mr-1" /> {saving ? "Saving…" : "Save & compress"}
-        </Button>
+        <Tabs defaultValue="add" className="flex-1 flex flex-col min-h-0">
+          <TabsList className="grid grid-cols-3 m-2">
+            <TabsTrigger value="add"><Plus className="size-4" /></TabsTrigger>
+            <TabsTrigger value="uploads"><ImageIcon className="size-4" /></TabsTrigger>
+            <TabsTrigger value="layers"><Layers className="size-4" /></TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="add" className="flex-1 overflow-auto px-3 pb-3 space-y-4 mt-0">
+            <div>
+              <Label className="text-xs">Canvas size</Label>
+              <Select value={preset} onValueChange={setPreset}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(PRESETS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Background</Label>
+              <div className="flex gap-2 mt-1">
+                <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="h-9 w-12 rounded border border-border bg-transparent cursor-pointer" />
+                <Input value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="flex-1" />
+              </div>
+            </div>
+            <Separator />
+            <div className="space-y-2">
+              <Label className="text-xs">Add elements</Label>
+              <Button variant="outline" className="w-full justify-start" onClick={addText}><Type className="size-4 mr-2" /> Text</Button>
+              <div className="grid grid-cols-3 gap-2">
+                <Button variant="outline" onClick={() => addShape("rect")}><SquareIcon className="size-4" /></Button>
+                <Button variant="outline" onClick={() => addShape("circle")}><CircleIcon className="size-4" /></Button>
+                <Button variant="outline" onClick={() => addShape("triangle")}><TriangleIcon className="size-4" /></Button>
+              </div>
+              <label className="flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-sm cursor-pointer hover:bg-accent">
+                <Upload className="size-4" /> Upload image
+                <input type="file" accept="image/*" className="hidden" onChange={onUploadImage} />
+              </label>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="uploads" className="flex-1 overflow-hidden mt-0 px-3 pb-3 flex flex-col">
+            <label className="flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-sm cursor-pointer hover:bg-accent mb-3">
+              <Upload className="size-4" /> Upload new
+              <input type="file" accept="image/*" className="hidden" onChange={async (e) => { await onUploadImage(e); void loadAssets(); }} />
+            </label>
+            <ScrollArea className="flex-1 -mx-1">
+              <div className="grid grid-cols-2 gap-2 px-1">
+                {assets.length === 0 && <p className="col-span-2 text-xs text-muted-foreground text-center py-6">No saved images yet</p>}
+                {assets.map((asset) => (
+                  <button key={asset.id} onClick={() => addImageFromUrl(asset.url)} className="group relative aspect-square rounded overflow-hidden border border-border hover:border-primary">
+                    <img src={asset.url} alt={asset.title} className="size-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="layers" className="flex-1 overflow-auto mt-0 px-3 pb-3">
+            <div className="space-y-1">
+              {[...objects].reverse().map((obj, idx) => {
+                const realIdx = objects.length - 1 - idx;
+                const label = obj instanceof fabric.IText || obj instanceof fabric.Textbox
+                  ? `T  ${(obj.text || "").slice(0, 20) || "Text"}`
+                  : obj instanceof fabric.FabricImage ? "🖼  Image"
+                  : obj instanceof fabric.Circle ? "○  Circle"
+                  : obj instanceof fabric.Triangle ? "△  Triangle" : "▭  Shape";
+                const isActive = a === obj;
+                return (
+                  <div key={realIdx} className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer ${isActive ? "bg-accent" : "hover:bg-accent/50"}`}
+                    onClick={() => { fcRef.current?.setActiveObject(obj); fcRef.current?.renderAll(); refresh(); }}>
+                    <button onClick={(e) => { e.stopPropagation(); obj.visible = !obj.visible; fcRef.current?.renderAll(); refresh(); }} className="text-muted-foreground hover:text-foreground">
+                      {obj.visible !== false ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+                    </button>
+                    <span className="flex-1 truncate">{label}</span>
+                  </div>
+                );
+              })}
+              {objects.length === 0 && <p className="text-xs text-muted-foreground text-center py-6">No layers yet</p>}
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
-      <div className="flex-1 bg-muted/40 overflow-auto flex items-center justify-center p-8">
-        <div className="bg-white shadow-[var(--shadow-elegant)]" style={{ maxWidth: "100%", maxHeight: "100%" }}>
-          <canvas ref={canvasRef} style={{ maxWidth: "100%", maxHeight: "70vh", width: "auto", height: "auto" }} />
+
+      {/* CENTER */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card">
+          <Button variant="ghost" size="sm" onClick={undo}><Undo2 className="size-4" /></Button>
+          <Button variant="ghost" size="sm" onClick={redo}><Redo2 className="size-4" /></Button>
+          <Separator orientation="vertical" className="h-6 mx-1" />
+          <Button variant="ghost" size="sm" onClick={() => setZoom((z) => Math.max(0.1, z - 0.1))}><ZoomOut className="size-4" /></Button>
+          <span className="text-xs w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+          <Button variant="ghost" size="sm" onClick={() => setZoom((z) => Math.min(2, z + 0.1))}><ZoomIn className="size-4" /></Button>
+          <Button variant="ghost" size="sm" onClick={() => setZoom(0.4)}><Maximize2 className="size-4" /></Button>
+          <div className="flex-1" />
+          <Button onClick={onSave} disabled={saving}>
+            <Save className="size-4 mr-1.5" /> {saving ? "Saving…" : "Save"}
+          </Button>
         </div>
+        <div className="flex-1 overflow-auto flex items-center justify-center p-8">
+          <div className="bg-white shadow-[var(--shadow-elegant)] inline-block">
+            <canvas ref={canvasRef} />
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT PANEL — properties */}
+      <div className="w-72 border-l border-border bg-card overflow-y-auto">
+        {!a && <div className="p-6 text-sm text-muted-foreground text-center">Select an element to edit its properties</div>}
+        {a && (
+          <div className="p-3 space-y-4">
+            <div className="grid grid-cols-4 gap-1">
+              <Button variant="outline" size="sm" onClick={duplicate} title="Duplicate"><Copy className="size-4" /></Button>
+              <Button variant="outline" size="sm" onClick={bringForward} title="Bring forward"><ArrowUp className="size-4" /></Button>
+              <Button variant="outline" size="sm" onClick={sendBackward} title="Send backward"><ArrowDown className="size-4" /></Button>
+              <Button variant="outline" size="sm" onClick={remove} title="Delete"><Trash2 className="size-4" /></Button>
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              <Button variant="outline" size="sm" onClick={rotate}><RotateCw className="size-4" /></Button>
+              <Button variant="outline" size="sm" onClick={flipH}><FlipHorizontal className="size-4" /></Button>
+              <Button variant="outline" size="sm" onClick={flipV}><FlipVertical className="size-4" /></Button>
+            </div>
+            <Separator />
+
+            {isText && (
+              <>
+                <div>
+                  <Label className="text-xs">Font</Label>
+                  <Select value={(a as fabric.IText).fontFamily as string} onValueChange={(v) => update(() => (a as fabric.IText).set("fontFamily", v))}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>{FONTS.map((f) => <SelectItem key={f} value={f} style={{ fontFamily: f }}>{f}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Size ({(a as fabric.IText).fontSize})</Label>
+                  <Slider min={8} max={400} step={1} value={[(a as fabric.IText).fontSize as number]} onValueChange={(v) => update(() => (a as fabric.IText).set("fontSize", v[0]))} className="mt-2" />
+                </div>
+                <div className="flex gap-1">
+                  <Button variant={(a as fabric.IText).fontWeight === "bold" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("fontWeight", (a as fabric.IText).fontWeight === "bold" ? "normal" : "bold"))}><Bold className="size-4" /></Button>
+                  <Button variant={(a as fabric.IText).fontStyle === "italic" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("fontStyle", (a as fabric.IText).fontStyle === "italic" ? "normal" : "italic"))}><Italic className="size-4" /></Button>
+                  <Button variant={(a as fabric.IText).underline ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("underline", !(a as fabric.IText).underline))}><Underline className="size-4" /></Button>
+                </div>
+                <ToggleGroup type="single" value={(a as fabric.IText).textAlign as string} onValueChange={(v) => v && update(() => (a as fabric.IText).set("textAlign", v))} className="justify-start">
+                  <ToggleGroupItem value="left"><AlignLeft className="size-4" /></ToggleGroupItem>
+                  <ToggleGroupItem value="center"><AlignCenter className="size-4" /></ToggleGroupItem>
+                  <ToggleGroupItem value="right"><AlignRight className="size-4" /></ToggleGroupItem>
+                </ToggleGroup>
+              </>
+            )}
+
+            {(isText || (!isImage && a)) && (
+              <ColorField label={isText ? "Text color" : "Fill"} value={(a.fill as string) ?? "#000000"} onChange={(c) => update(() => a.set("fill", c))} />
+            )}
+
+            {!isImage && a && (
+              <>
+                <ColorField label="Stroke" value={(a.stroke as string) ?? "#000000"} onChange={(c) => update(() => a.set("stroke", c))} />
+                <div>
+                  <Label className="text-xs">Stroke width ({a.strokeWidth ?? 0})</Label>
+                  <Slider min={0} max={40} step={1} value={[a.strokeWidth ?? 0]} onValueChange={(v) => update(() => a.set("strokeWidth", v[0]))} className="mt-2" />
+                </div>
+              </>
+            )}
+
+            {isImage && (
+              <ImageFilters image={a as fabric.FabricImage} onChange={() => { fcRef.current?.renderAll(); pushHistory(); refresh(); }} />
+            )}
+
+            <div>
+              <Label className="text-xs">Opacity ({Math.round((a.opacity ?? 1) * 100)}%)</Label>
+              <Slider min={0} max={100} step={1} value={[(a.opacity ?? 1) * 100]} onValueChange={(v) => update(() => a.set("opacity", v[0] / 100))} className="mt-2" />
+            </div>
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (c: string) => void }) {
+  return (
+    <div>
+      <Label className="text-xs">{label}</Label>
+      <div className="flex gap-2 mt-1">
+        <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="h-9 w-12 rounded border border-border bg-transparent cursor-pointer" />
+        <Input value={value} onChange={(e) => onChange(e.target.value)} className="flex-1" />
+      </div>
+      <div className="flex flex-wrap gap-1 mt-2">
+        {SWATCHES.map((c) => (
+          <button key={c} onClick={() => onChange(c)} className="size-5 rounded border border-border" style={{ background: c }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ImageFilters({ image, onChange }: { image: fabric.FabricImage; onChange: () => void }) {
+  const getFilter = <T,>(Type: new (opts: any) => T): T | undefined => image.filters.find((f) => f instanceof (Type as any)) as T | undefined;
+  const setFilter = <T,>(Type: new (opts: any) => T, opts: any) => {
+    image.filters = image.filters.filter((f) => !(f instanceof (Type as any)));
+    image.filters.push(new Type(opts));
+    image.applyFilters();
+    onChange();
+  };
+  const brightness = (getFilter(fabric.filters.Brightness) as any)?.brightness ?? 0;
+  const contrast = (getFilter(fabric.filters.Contrast) as any)?.contrast ?? 0;
+  const saturation = (getFilter(fabric.filters.Saturation) as any)?.saturation ?? 0;
+  const blur = (getFilter(fabric.filters.Blur) as any)?.blur ?? 0;
+  return (
+    <>
+      <div>
+        <Label className="text-xs">Brightness ({Math.round(brightness * 100)})</Label>
+        <Slider min={-100} max={100} step={1} value={[brightness * 100]} onValueChange={(v) => setFilter(fabric.filters.Brightness, { brightness: v[0] / 100 })} className="mt-2" />
+      </div>
+      <div>
+        <Label className="text-xs">Contrast ({Math.round(contrast * 100)})</Label>
+        <Slider min={-100} max={100} step={1} value={[contrast * 100]} onValueChange={(v) => setFilter(fabric.filters.Contrast, { contrast: v[0] / 100 })} className="mt-2" />
+      </div>
+      <div>
+        <Label className="text-xs">Saturation ({Math.round(saturation * 100)})</Label>
+        <Slider min={-100} max={100} step={1} value={[saturation * 100]} onValueChange={(v) => setFilter(fabric.filters.Saturation, { saturation: v[0] / 100 })} className="mt-2" />
+      </div>
+      <div>
+        <Label className="text-xs">Blur ({Math.round(blur * 100)})</Label>
+        <Slider min={0} max={100} step={1} value={[blur * 100]} onValueChange={(v) => setFilter(fabric.filters.Blur, { blur: v[0] / 100 })} className="mt-2" />
+      </div>
+    </>
   );
 }
