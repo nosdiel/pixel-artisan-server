@@ -13,7 +13,7 @@ export const syncSquareCatalog = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const { data: conn, error: connErr } = await supabase
       .from("square_connections")
-      .select("source, access_token, environment, site_url")
+      .select("source, access_token, environment, site_url, client_id, client_secret, restaurant_guid")
       .maybeSingle();
     if (connErr) throw new Error(connErr.message);
     if (!conn) throw new Error("Square is not connected. Add a token in Settings first.");
@@ -27,7 +27,7 @@ export const startSquareSyncJob = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const { data: conn } = await supabase
       .from("square_connections")
-      .select("source, access_token, environment, site_url")
+      .select("source, access_token, environment, site_url, client_id, client_secret, restaurant_guid")
       .maybeSingle();
     if (!conn) throw new Error("Square is not connected. Configure it in Settings first.");
 
@@ -67,7 +67,7 @@ export const stepSquareSyncJob = createServerFn({ method: "POST" })
 
     const { data: conn } = await supabase
       .from("square_connections")
-      .select("source, access_token, environment, site_url")
+      .select("source, access_token, environment, site_url, client_id, client_secret, restaurant_guid")
       .maybeSingle();
     if (!conn) throw new Error("Square connection missing");
 
