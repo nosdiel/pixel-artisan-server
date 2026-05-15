@@ -77,7 +77,12 @@ function TemplatesPage() {
         setProcessed(r.processed);
         if (r.done) {
           if (r.status === "succeeded") {
-            toast.success(`Synced ${r.processed} items · ${r.staleCount ?? 0} templates marked stale`);
+            const updated = r.updatedCount ?? 0;
+            const stale = r.staleCount ?? 0;
+            const parts = [`Synced ${r.processed} items`];
+            if (updated) parts.push(`${updated} template${updated === 1 ? "" : "s"} auto-updated`);
+            if (stale) parts.push(`${stale} flagged stale`);
+            toast.success(parts.join(" · "));
           }
           break;
         }
