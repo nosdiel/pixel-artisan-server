@@ -21,7 +21,10 @@ function SettingsPage() {
   const [token, setToken] = useState("");
   const [env, setEnv] = useState<"production" | "sandbox">("production");
   const [siteUrl, setSiteUrl] = useState("");
-  const [source, setSource] = useState<"api" | "online_site">("api");
+  const [source, setSource] = useState<"api" | "online_site" | "toast_api">("api");
+  const [toastClientId, setToastClientId] = useState("");
+  const [toastClientSecret, setToastClientSecret] = useState("");
+  const [toastRestaurantGuid, setToastRestaurantGuid] = useState("");
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
   const [autoSync, setAutoSync] = useState(false);
@@ -37,15 +40,17 @@ function SettingsPage() {
     (async () => {
       const { data } = await supabase
         .from("square_connections")
-        .select("merchant_id, environment, auto_sync_enabled, last_sync_at, source, site_url")
+        .select("merchant_id, environment, auto_sync_enabled, last_sync_at, source, site_url, client_id, restaurant_guid")
         .maybeSingle();
       if (data) {
         setConnected(true);
         setEnv((data.environment as "production" | "sandbox") ?? "production");
         setAutoSync(!!data.auto_sync_enabled);
         setLastSync(data.last_sync_at);
-        setSource((data.source as "api" | "online_site") ?? "api");
+        setSource((data.source as "api" | "online_site" | "toast_api") ?? "api");
         setSiteUrl(data.site_url ?? "");
+        setToastClientId(data.client_id ?? "");
+        setToastRestaurantGuid(data.restaurant_guid ?? "");
       }
     })();
   }, []);
@@ -55,12 +60,23 @@ function SettingsPage() {
     try {
       if (source === "api") {
         await save({ data: { source: "api", access_token: token, environment: env } });
-      } else {
+      } else if (source === "online_site") {
         await save({ data: { source: "online_site", site_url: siteUrl } });
+      } else {
+        await save({
+          data: {
+            source: "toast_api",
+            environment: env,
+            client_id: toastClientId,
+            client_secret: toastClientSecret,
+            restaurant_guid: toastRestaurantGuid,
+          },
+        });
       }
-      toast.success("Square connection saved");
+      toast.success("POS connection saved");
       setConnected(true);
       setToken("");
+      setToastClientSecret("");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -115,15 +131,16 @@ function SettingsPage() {
     <div className="p-8 max-w-2xl">
       <h1 className="text-3xl font-bold mb-6">Settings</h1>
       <div className="rounded-xl border border-border bg-card p-6 shadow-[var(--shadow-card)]">
-        <h2 className="font-semibold mb-1">Square integration</h2>
+        <h2 className="font-semibold mb-1">POS integration</h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Pull catalog data from the Square API or directly from your public Square Online ordering site.
+          Choose which point-of-sale system to sync your catalog from.
         </p>
 
-        <Tabs value={source} onValueChange={(v) => setSource(v as "api" | "online_site")}>
+        <Tabs value={source} onValueChange={(v) => setSource(v as "api" | "online_site" | "toast_api")}>
           <TabsList className="mb-4">
             <TabsTrigger value="api">Square API</TabsTrigger>
             <TabsTrigger value="online_site">Square Online site</TabsTrigger>
+            <TabsTrigger value="toast_api">Toast API</TabsTrigger>
           </TabsList>
 
           <TabsContent value="api" className="space-y-3">
@@ -155,6 +172,41 @@ function SettingsPage() {
               </p>
             </div>
             <Button onClick={handleSave} disabled={!siteUrl || loading}>{loading ? "Validating…" : "Save"}</Button>
+          </TabsContent>
+
+          <TabsContent value="toast_api" className="space-y-3">
+            <div>
+              <Label>Environment</Label>
+              <select
+                value={env}
+                onChange={(e) => setEnv(e.target.value as "production" | "sandbox")}
+                className="mt-1 w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+              >
+                <option value="production">Production</option>
+                <option value="sandbox">Sandbox</option>
+              </select>
+            </div>
+            <div>
+              <Label>Client ID</Label>
+              <Input value={toastClientId} onChange={(e) => setToastClientId(e.target.value)} placeholder="Toast API client ID" className="mt-1" />
+            </div>
+            <div>
+              <Label>Client Secret</Label>
+              <Input type="password" value={toastClientSecret} onChange={(e) => setToastClientSecret(e.target.value)} placeholder="Toast API client secret" className="mt-1" />
+            </div>
+            <div>
+              <Label>Restaurant GUID</Label>
+              <Input value={toastRestaurantGuid} onChange={(e) => setToastRestaurantGuid(e.target.value)} placeholder="e.g. 12345678-aaaa-bbbb-cccc-1234567890ab" className="mt-1" />
+              <p className="text-xs text-muted-foreground mt-1">
+                Find this in Toast Web under Restaurant Admin → Restaurant Info, or ask your Toast partner contact. Sent as the <code>Toast-Restaurant-External-ID</code> header.
+              </p>
+            </div>
+            <Button
+              onClick={handleSave}
+              disabled={!toastClientId || !toastClientSecret || !toastRestaurantGuid || loading}
+            >
+              {loading ? "Saving…" : "Save"}
+            </Button>
           </TabsContent>
         </Tabs>
 
