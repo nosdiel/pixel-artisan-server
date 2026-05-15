@@ -2,7 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { syncUserCatalog, fetchSourcePage, recomputeStaleTemplates } from "./square-sync.server";
-import { fetchOnlineSiteCatalog } from "./square-online.server";
 
 export const syncSquareCatalog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
