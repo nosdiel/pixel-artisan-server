@@ -597,7 +597,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const canvasJson = (fc as any).toJSON(["imageStoragePath", "squareBinding", "videoStoragePath"]);
+    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
     patchSerializedMedia(canvasJson.objects, fc.getObjects());
     const json = JSON.stringify(canvasJson);
     const h = historyRef.current;
@@ -823,7 +823,7 @@ function EditorPage() {
       fc.setZoom(1);
       fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = (fc as any).toJSON(["imageStoragePath", "squareBinding", "videoStoragePath"]);
+      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
       fc.setZoom(prevZoom);
       fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
