@@ -86,6 +86,9 @@ function EditorPage() {
   const [templateId, setTemplateId] = useState<string | null>(templateIdParam ?? null);
   const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
   const [pendingBaseImage, setPendingBaseImage] = useState<PendingBaseImage | null>(null);
+  const [customFonts, setCustomFonts] = useState<string[]>([]);
+  const [uploadingFont, setUploadingFont] = useState(false);
+  const fontInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   const getFitZoom = useCallback((presetKey = preset) => {
@@ -289,6 +292,54 @@ function EditorPage() {
 
   // Load asset library
   useEffect(() => { void loadAssets(); }, []);
+  useEffect(() => { void loadCustomFonts(); }, []);
+
+  const registerFont = async (family: string, url: string) => {
+    try {
+      const face = new FontFace(family, `url(${url})`);
+      const loaded = await face.load();
+      (document.fonts as any).add(loaded);
+      setCustomFonts((prev) => (prev.includes(family) ? prev : [...prev, family]));
+    } catch {
+      // ignore
+    }
+  };
+  const loadCustomFonts = async () => {
+    const { data: ud } = await supabase.auth.getUser();
+    if (!ud.user) return;
+    const { data } = await supabase.storage.from("fonts").list(ud.user.id, { limit: 100 });
+    if (!data) return;
+    for (const f of data) {
+      const path = `${ud.user.id}/${f.name}`;
+      const { data: signed } = await supabase.storage.from("fonts").createSignedUrl(path, 3600);
+      if (!signed?.signedUrl) continue;
+      const family = f.name.replace(/\.(otf|ttf|woff2?|woff)$/i, "");
+      await registerFont(family, signed.signedUrl);
+    }
+  };
+  const onUploadFont = async (file: File) => {
+    const ok = /\.(otf|ttf|woff2?|woff)$/i.test(file.name);
+    if (!ok) { toast.error("Use .otf, .ttf, .woff or .woff2"); return; }
+    setUploadingFont(true);
+    try {
+      const { data: ud } = await supabase.auth.getUser();
+      if (!ud.user) { toast.error("Sign in required"); return; }
+      const safe = file.name.replace(/[^\w.\-]+/g, "_");
+      const path = `${ud.user.id}/${safe}`;
+      const { error } = await supabase.storage.from("fonts").upload(path, file, { upsert: true, contentType: file.type || "font/otf" });
+      if (error) throw error;
+      const { data: signed } = await supabase.storage.from("fonts").createSignedUrl(path, 3600);
+      if (!signed?.signedUrl) throw new Error("No URL");
+      const family = safe.replace(/\.(otf|ttf|woff2?|woff)$/i, "");
+      await registerFont(family, signed.signedUrl);
+      toast.success(`Font "${family}" added`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Font upload failed");
+    } finally {
+      setUploadingFont(false);
+    }
+  };
+
   const loadAssets = async () => {
     const { data: ud } = await supabase.auth.getUser();
     if (!ud.user) return;
@@ -656,10 +707,35 @@ function EditorPage() {
             {isText && (
               <>
                 <div>
-                  <Label className="text-xs">Font</Label>
-                  <Select value={(a as Fabric.IText).fontFamily as string} onValueChange={(v) => update(() => (a as Fabric.IText).set("fontFamily", v))}>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Font</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      disabled={uploadingFont}
+                      onClick={() => fontInputRef.current?.click()}
+                    >
+                      <Upload className="size-3 mr-1" />
+                      {uploadingFont ? "Uploading…" : "Upload"}
+                    </Button>
+                  </div>
+                  <input
+                    ref={fontInputRef}
+                    type="file"
+                    accept=".otf,.ttf,.woff,.woff2,font/otf,font/ttf,font/woff,font/woff2"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void onUploadFont(f);
+                      e.target.value = "";
+                    }}
+                  />
+                  <Select value={(a as Fabric.IText).fontFamily as string} onValueChange={(v) => update(() => { (a as Fabric.IText).set("fontFamily", v); fcRef.current?.requestRenderAll(); })}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>{FONTS.map((f) => <SelectItem key={f} value={f} style={{ fontFamily: f }}>{f}</SelectItem>)}</SelectContent>
+                    <SelectContent>
+                      {[...FONTS, ...customFonts].map((f) => <SelectItem key={f} value={f} style={{ fontFamily: f }}>{f}</SelectItem>)}
+                    </SelectContent>
                   </Select>
                 </div>
                 <div>
