@@ -161,7 +161,7 @@ function EditorPage() {
           obj.videoStoragePath = videoPath;
         }
       }
-      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : (!videoPath ? srcPath : null);
+      const path = !videoPath ? (typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : srcPath) : null;
       if (path) {
         const { data } = await supabase.storage.from("images").createSignedUrl(path, 3600);
         if (data?.signedUrl) {
