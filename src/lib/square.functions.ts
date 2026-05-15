@@ -85,7 +85,7 @@ export const stepSquareSyncJob = createServerFn({ method: "POST" })
       const done = !cursor;
 
       if (done) {
-        const staleCount = await recomputeStaleTemplates(userId);
+        const { staleCount, updatedCount } = await recomputeStaleTemplates(userId);
         await supabase
           .from("square_connections")
           .update({ last_sync_at: new Date().toISOString() })
@@ -96,11 +96,11 @@ export const stepSquareSyncJob = createServerFn({ method: "POST" })
             status: "succeeded",
             cursor: null,
             processed_items: processed,
-            stale_templates: staleCount,
+            stale_templates: staleCount + updatedCount,
             finished_at: new Date().toISOString(),
           })
           .eq("id", job.id);
-        return { status: "succeeded" as const, processed, staleCount, done: true };
+        return { status: "succeeded" as const, processed, staleCount, updatedCount, done: true };
       }
 
       await supabase
