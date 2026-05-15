@@ -579,6 +579,73 @@ function EditorPage() {
     await addImageFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
     e.target.value = "";
   };
+
+  const videoRafRef = useRef<Set<number>>(new Set());
+  const startVideoRaf = (fc: Fabric.Canvas, video: HTMLVideoElement) => {
+    let rafId = 0;
+    const tick = () => {
+      if (video.paused || video.ended) {
+        videoRafRef.current.delete(rafId);
+        return;
+      }
+      fc.requestRenderAll();
+      rafId = requestAnimationFrame(tick);
+      videoRafRef.current.add(rafId);
+    };
+    rafId = requestAnimationFrame(tick);
+    videoRafRef.current.add(rafId);
+  };
+  const addVideoFromUrl = async (url: string, path?: string) => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const video = document.createElement("video");
+    video.src = url;
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    await new Promise<void>((resolve, reject) => {
+      video.onloadeddata = () => resolve();
+      video.onerror = () => reject(new Error("Could not load video"));
+    });
+    video.width = video.videoWidth;
+    video.height = video.videoHeight;
+    const img = new fabric.FabricImage(video, { objectCaching: false });
+    const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
+    const scale = Math.min(max / video.videoWidth, max / video.videoHeight, 1);
+    img.scale(scale);
+    img.set({
+      left: (fc.width! - video.videoWidth * scale) / 2,
+      top: (fc.height! - video.videoHeight * scale) / 2,
+    });
+    if (path) img.set("videoStoragePath", path);
+    fc.add(img); fc.setActiveObject(img);
+    try { await video.play(); } catch { /* autoplay may be blocked until interaction */ }
+    startVideoRaf(fc, video);
+    pushHistory(); refresh();
+  };
+  const onUploadVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error("Video too large (max 50MB)");
+      e.target.value = "";
+      return;
+    }
+    const { data: ud } = await supabase.auth.getUser();
+    if (!ud.user) { e.target.value = ""; return; }
+    const ext = file.name.split(".").pop()?.toLowerCase() || "mp4";
+    const path = `${ud.user.id}/editor-assets/${nanoid(10)}.${ext}`;
+    toast.info("Uploading video…");
+    const { error } = await supabase.storage.from("images").upload(path, file, { contentType: file.type || "video/mp4", upsert: true });
+    if (error) { toast.error(error.message); e.target.value = ""; return; }
+    const { data: signed } = await supabase.storage.from("images").createSignedUrl(path, 3600);
+    try {
+      await addVideoFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not place video");
+    }
+    e.target.value = "";
+  };
   const addText = () => {
     const fc = fcRef.current; if (!fc || !fabric) return;
     const t = new fabric.IText("Your text", {
