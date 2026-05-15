@@ -70,6 +70,7 @@ export const Route = createFileRoute("/_authenticated/editor")({
 function EditorPage() {
   const { template: templateIdParam, image: imageIdParam } = Route.useSearch();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasHostRef = useRef<HTMLDivElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
   const historyRef = useRef<{ stack: string[]; index: number; suspend: boolean }>({ stack: [], index: -1, suspend: false });
   const [fabric, setFabric] = useState<FabricModule | null>(null);
@@ -86,6 +87,15 @@ function EditorPage() {
   const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
   const [pendingBaseImage, setPendingBaseImage] = useState<PendingBaseImage | null>(null);
   const navigate = useNavigate();
+
+  const getFitZoom = useCallback((presetKey = preset) => {
+    const host = canvasHostRef.current;
+    const { w, h } = PRESETS[presetKey];
+    if (!host) return Math.min(0.4, 720 / h, 900 / w);
+    const availableWidth = Math.max(host.clientWidth - 64, 320);
+    const availableHeight = Math.max(host.clientHeight - 64, 320);
+    return Math.max(0.1, Math.min(availableWidth / w, availableHeight / h, 1));
+  }, [preset]);
 
   const withFreshImageUrls = useCallback(async (canvasJson: unknown) => {
     const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
@@ -184,8 +194,10 @@ function EditorPage() {
     const { w, h } = PRESETS[preset];
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
-    fc.setZoom(zoom);
-    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
+    const fittedZoom = getFitZoom(preset);
+    fc.setZoom(fittedZoom);
+    fc.setDimensions({ width: w * fittedZoom, height: h * fittedZoom }, { cssOnly: true });
+    setZoom(fittedZoom);
 
     const onSel = () => { setActive(fc.getActiveObject() ?? null); refresh(); };
     const onMod = () => { pushHistory(); refresh(); };
@@ -199,7 +211,7 @@ function EditorPage() {
     pushHistory();
     return () => { fc.dispose(); fcRef.current = null; historyRef.current = { stack: [], index: -1, suspend: false }; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fabric, preset]);
+  }, [fabric, preset, getFitZoom]);
 
   // Hydrate canvas from saved template JSON once canvas exists
   useEffect(() => {
