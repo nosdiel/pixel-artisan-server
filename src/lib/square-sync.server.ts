@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
+import { fetchOnlineSiteCatalog } from "./square-online.server";
 
 type SquareItem = {
   id: string;
@@ -80,6 +81,26 @@ export function flattenItem(item: SquareItem) {
     currency: v?.price_money?.currency ?? "USD",
     raw: item as unknown as Json,
   };
+}
+
+export type ConnectionSource = {
+  source: string;
+  access_token: string | null;
+  environment: string;
+  site_url: string | null;
+};
+
+/** Resolve a single page of items for either source. Online-site source returns everything in one page. */
+export async function fetchSourcePage(conn: ConnectionSource, cursor?: string) {
+  if (conn.source === "online_site") {
+    if (!conn.site_url) throw new Error("Square Online site URL is not set");
+    if (cursor) return { items: [] as ReturnType<typeof flattenItem>[], cursor: undefined };
+    const items = await fetchOnlineSiteCatalog(conn.site_url);
+    return { items, cursor: undefined };
+  }
+  if (!conn.access_token) throw new Error("Square access token is not set");
+  const page = await fetchCatalogPage(conn.access_token, conn.environment, cursor);
+  return { items: page.items.map(flattenItem), cursor: page.cursor };
 }
 
 /** Run sync + stale detection for a single user, using the admin client. */
