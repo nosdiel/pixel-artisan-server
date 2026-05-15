@@ -402,26 +402,6 @@ function EditorPage() {
       const { best, variants, originalSize, width, height } = await autoCompress(blob);
       const { data: ud } = await supabase.auth.getUser();
       const userId = ud.user!.id;
-      const { data: existingImage } = savedTemplateId
-        ? await supabase
-            .from("images")
-            .select("id, slug")
-            .eq("user_id", userId)
-            .eq("template_id", savedTemplateId)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle()
-        : { data: null };
-      const slug = existingImage?.slug ?? nanoid(10);
-      const baseFolder = `${userId}/${slug}`;
-      const variantRecords: { format: string; path: string; size: number; quality: number }[] = [];
-      for (const v of variants) {
-        const path = `${baseFolder}/image.${v.format === "jpeg" ? "jpg" : v.format}`;
-        const { error } = await supabase.storage.from("images").upload(path, v.blob, { contentType: v.blob.type, upsert: true });
-        if (error) throw error;
-        variantRecords.push({ format: v.format, path, size: v.size, quality: v.quality });
-      }
-      variantRecords.sort((x, y) => x.size - y.size);
 
       // Persist editable template (insert or update)
       let savedTemplateId = templateId;
@@ -449,6 +429,29 @@ function EditorPage() {
         savedTemplateId = tplRow.id;
         setTemplateId(savedTemplateId);
       }
+
+      const { data: existingImage } = imageIdParam
+        ? await supabase.from("images").select("id, slug").eq("user_id", userId).eq("id", imageIdParam).maybeSingle()
+        : savedTemplateId
+          ? await supabase
+              .from("images")
+              .select("id, slug")
+              .eq("user_id", userId)
+              .eq("template_id", savedTemplateId)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle()
+          : { data: null };
+      const slug = existingImage?.slug ?? nanoid(10);
+      const baseFolder = `${userId}/${slug}`;
+      const variantRecords: { format: string; path: string; size: number; quality: number }[] = [];
+      for (const v of variants) {
+        const path = `${baseFolder}/image.${v.format === "jpeg" ? "jpg" : v.format}`;
+        const { error } = await supabase.storage.from("images").upload(path, v.blob, { contentType: v.blob.type, upsert: true });
+        if (error) throw error;
+        variantRecords.push({ format: v.format, path, size: v.size, quality: v.quality });
+      }
+      variantRecords.sort((x, y) => x.size - y.size);
 
       const imagePayload = {
         user_id: userId, slug, title, width, height,
