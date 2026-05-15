@@ -625,31 +625,46 @@ function EditorPage() {
   const addVideoFromUrl = async (url: string, path?: string) => {
     const fc = fcRef.current; if (!fc || !fabric) return;
     const video = document.createElement("video");
-    video.src = url;
     video.crossOrigin = "anonymous";
     video.muted = true;
     video.loop = true;
     video.playsInline = true;
     video.autoplay = true;
+    video.preload = "auto";
+    video.src = url;
     await new Promise<void>((resolve, reject) => {
-      video.onloadeddata = () => resolve();
-      video.onerror = () => reject(new Error("Could not load video"));
+      const onReady = () => { cleanup(); resolve(); };
+      const onErr = () => {
+        cleanup();
+        const code = video.error?.code;
+        reject(new Error(`Could not load video (code ${code ?? "?"}). Format may be unsupported by the browser.`));
+      };
+      const cleanup = () => {
+        video.removeEventListener("loadedmetadata", onReady);
+        video.removeEventListener("error", onErr);
+      };
+      video.addEventListener("loadedmetadata", onReady, { once: true });
+      video.addEventListener("error", onErr, { once: true });
+      try { video.load(); } catch { /* ignore */ }
     });
-    video.width = video.videoWidth;
-    video.height = video.videoHeight;
-    const img = new fabric.FabricImage(video, { objectCaching: false });
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 360;
+    video.width = vw;
+    video.height = vh;
+    const img = new fabric.FabricImage(video, { objectCaching: false, width: vw, height: vh });
     const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
-    const scale = Math.min(max / video.videoWidth, max / video.videoHeight, 1);
+    const scale = Math.min(max / vw, max / vh, 1);
     img.scale(scale);
     img.set({
-      left: (fc.width! - video.videoWidth * scale) / 2,
-      top: (fc.height! - video.videoHeight * scale) / 2,
+      left: (fc.width! - vw * scale) / 2,
+      top: (fc.height! - vh * scale) / 2,
     });
     if (path) img.set("videoStoragePath", path);
-    fc.add(img); fc.setActiveObject(img);
+    fc.add(img); fc.setActiveObject(img); fc.requestRenderAll();
     try { await video.play(); } catch { /* autoplay may be blocked until interaction */ }
     startVideoRaf(fc, video);
     pushHistory(); refresh();
+    toast.success("Video added to canvas");
   };
   const onUploadVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -662,13 +677,20 @@ function EditorPage() {
     if (!ud.user) { e.target.value = ""; return; }
     const ext = file.name.split(".").pop()?.toLowerCase() || "mp4";
     const path = `${ud.user.id}/editor-assets/${nanoid(10)}.${ext}`;
-    toast.info("Uploading video…");
+    const tId = toast.loading("Uploading video…");
     const { error } = await supabase.storage.from("images").upload(path, file, { contentType: file.type || "video/mp4", upsert: true });
-    if (error) { toast.error(error.message); e.target.value = ""; return; }
-    const { data: signed } = await supabase.storage.from("images").createSignedUrl(path, 3600);
+    if (error) { toast.error(error.message, { id: tId }); e.target.value = ""; return; }
+    const { data: signed, error: signErr } = await supabase.storage.from("images").createSignedUrl(path, 3600);
+    if (signErr || !signed?.signedUrl) {
+      toast.error(signErr?.message ?? "Could not get video URL", { id: tId });
+      e.target.value = "";
+      return;
+    }
+    toast.dismiss(tId);
     try {
-      await addVideoFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
+      await addVideoFromUrl(signed.signedUrl, path);
     } catch (err) {
+      console.error("[video upload] failed to place on canvas:", err);
       toast.error(err instanceof Error ? err.message : "Could not place video");
     }
     e.target.value = "";
