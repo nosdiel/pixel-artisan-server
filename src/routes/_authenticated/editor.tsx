@@ -62,6 +62,40 @@ function extractStoragePath(src: string) {
   }
 }
 
+const TRANSPARENT_VIDEO_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const VIDEO_STORAGE_EXT_RE = /\.(mp4|mov|m4v|webm|ogg|ogv)(?:$|[?#])/i;
+
+function isVideoStoragePath(path: string) {
+  return VIDEO_STORAGE_EXT_RE.test(path);
+}
+
+function getFabricObjectSrc(obj: any): string | null {
+  const direct = typeof obj?.src === "string" ? obj.src : null;
+  const fromGetter = typeof obj?.getSrc === "function" ? obj.getSrc() : null;
+  const el = typeof obj?.getElement === "function" ? obj.getElement() : null;
+  const fromElement = el instanceof HTMLVideoElement || el instanceof HTMLImageElement ? el.currentSrc || el.src : null;
+  return direct || fromGetter || fromElement || null;
+}
+
+function patchSerializedMedia(serializedObjects: any[] | undefined, liveObjects: any[] | undefined) {
+  if (!Array.isArray(serializedObjects) || !Array.isArray(liveObjects)) return;
+  serializedObjects.forEach((serialized, index) => {
+    const live = liveObjects[index];
+    if (!serialized || !live) return;
+    const src = getFabricObjectSrc(live) || (typeof serialized.src === "string" ? serialized.src : null);
+    const storedVideoPath = typeof live.videoStoragePath === "string" ? live.videoStoragePath : null;
+    const extractedPath = src ? extractStoragePath(src) : null;
+    const videoPath = storedVideoPath || (extractedPath && isVideoStoragePath(extractedPath) ? extractedPath : null);
+    if (videoPath) {
+      serialized.videoStoragePath = videoPath;
+      delete serialized.imageStoragePath;
+      serialized.src = TRANSPARENT_VIDEO_PLACEHOLDER;
+      serialized.crossOrigin = "anonymous";
+    }
+    patchSerializedMedia(serialized.objects ?? serialized._objects, live.getObjects?.() ?? live._objects);
+  });
+}
+
 function presetForImage(width: number, height: number) {
   const exact = Object.entries(PRESETS).find(([, size]) => size.w === width && size.h === height)?.[0];
   if (exact) return exact;
