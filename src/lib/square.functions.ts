@@ -183,7 +183,7 @@ export const saveSquareConnection = createServerFn({ method: "POST" })
         throw new Error(e instanceof Error ? e.message : String(e));
       }
     }
-    const row =
+    const row = (
       data.source === "api"
         ? {
             user_id: context.userId,
@@ -198,7 +198,8 @@ export const saveSquareConnection = createServerFn({ method: "POST" })
             access_token: null,
             environment: "production",
             site_url: data.site_url,
-          };
+          }
+    ) as never;
     const { error } = await context.supabase.from("square_connections").upsert(row);
     if (error) throw new Error(error.message);
     return { ok: true };
