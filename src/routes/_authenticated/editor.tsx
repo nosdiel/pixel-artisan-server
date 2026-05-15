@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as fabric from "fabric";
+import type * as Fabric from "fabric";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,27 +35,37 @@ const FONTS = ["Inter", "Arial", "Georgia", "Times New Roman", "Courier New", "I
 const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
 
 type Asset = { id: string; title: string; url: string };
+type FabricModule = typeof import("fabric");
 
 export const Route = createFileRoute("/_authenticated/editor")({ component: EditorPage, ssr: false });
 
 function EditorPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fcRef = useRef<fabric.Canvas | null>(null);
+  const fcRef = useRef<Fabric.Canvas | null>(null);
   const historyRef = useRef<{ stack: string[]; index: number; suspend: boolean }>({ stack: [], index: -1, suspend: false });
+  const [fabric, setFabric] = useState<FabricModule | null>(null);
   const [preset, setPreset] = useState("1920x1080");
   const [title, setTitle] = useState("Untitled");
   const [bgColor, setBgColor] = useState("#ffffff");
   const [zoom, setZoom] = useState(0.4);
-  const [active, setActive] = useState<fabric.Object | null>(null);
+  const [active, setActive] = useState<Fabric.Object | null>(null);
   const [, forceUpdate] = useState(0);
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
   const [saving, setSaving] = useState(false);
   const [assets, setAssets] = useState<Asset[]>([]);
   const navigate = useNavigate();
 
+  useEffect(() => {
+    let mounted = true;
+    void import("fabric").then((mod) => {
+      if (mounted) setFabric(mod);
+    });
+    return () => { mounted = false; };
+  }, []);
+
   // Initialize canvas
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!fabric || !canvasRef.current) return;
     const { w, h } = PRESETS[preset];
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
@@ -74,7 +84,7 @@ function EditorPage() {
     pushHistory();
     return () => { fc.dispose(); fcRef.current = null; historyRef.current = { stack: [], index: -1, suspend: false }; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset]);
+  }, [fabric, preset]);
 
   // Apply zoom
   useEffect(() => {
