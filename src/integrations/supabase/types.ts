@@ -14,7 +14,279 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      api_keys: {
+        Row: {
+          created_at: string
+          id: string
+          key_hash: string
+          key_prefix: string
+          last_used_at: string | null
+          name: string
+          revoked_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key_hash: string
+          key_prefix: string
+          last_used_at?: string | null
+          name?: string
+          revoked_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key_hash?: string
+          key_prefix?: string
+          last_used_at?: string | null
+          name?: string
+          revoked_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      images: {
+        Row: {
+          created_at: string
+          height: number
+          id: string
+          optimized_size_bytes: number
+          original_path: string | null
+          original_size_bytes: number
+          preset: string | null
+          slug: string
+          source: string
+          template_id: string | null
+          title: string
+          updated_at: string
+          user_id: string
+          variants: Json
+          width: number
+        }
+        Insert: {
+          created_at?: string
+          height?: number
+          id?: string
+          optimized_size_bytes?: number
+          original_path?: string | null
+          original_size_bytes?: number
+          preset?: string | null
+          slug: string
+          source?: string
+          template_id?: string | null
+          title?: string
+          updated_at?: string
+          user_id: string
+          variants?: Json
+          width?: number
+        }
+        Update: {
+          created_at?: string
+          height?: number
+          id?: string
+          optimized_size_bytes?: number
+          original_path?: string | null
+          original_size_bytes?: number
+          preset?: string | null
+          slug?: string
+          source?: string
+          template_id?: string | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+          variants?: Json
+          width?: number
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      square_connections: {
+        Row: {
+          access_token: string
+          created_at: string
+          environment: string
+          last_sync_at: string | null
+          location_id: string | null
+          merchant_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_token: string
+          created_at?: string
+          environment?: string
+          last_sync_at?: string | null
+          location_id?: string | null
+          merchant_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_token?: string
+          created_at?: string
+          environment?: string
+          last_sync_at?: string | null
+          location_id?: string | null
+          merchant_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      square_items_cache: {
+        Row: {
+          category: string | null
+          currency: string | null
+          description: string | null
+          id: string
+          name: string | null
+          price_cents: number | null
+          raw: Json | null
+          square_item_id: string
+          synced_at: string
+          user_id: string
+        }
+        Insert: {
+          category?: string | null
+          currency?: string | null
+          description?: string | null
+          id?: string
+          name?: string | null
+          price_cents?: number | null
+          raw?: Json | null
+          square_item_id: string
+          synced_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string | null
+          currency?: string | null
+          description?: string | null
+          id?: string
+          name?: string | null
+          price_cents?: number | null
+          raw?: Json | null
+          square_item_id?: string
+          synced_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      template_renders: {
+        Row: {
+          id: string
+          image_id: string | null
+          price_snapshot: Json | null
+          rendered_at: string
+          template_id: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          image_id?: string | null
+          price_snapshot?: Json | null
+          rendered_at?: string
+          template_id: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          image_id?: string | null
+          price_snapshot?: Json | null
+          rendered_at?: string
+          template_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "template_renders_image_id_fkey"
+            columns: ["image_id"]
+            isOneToOne: false
+            referencedRelation: "images"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "template_renders_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      templates: {
+        Row: {
+          canvas_json: Json
+          created_at: string
+          height: number
+          id: string
+          is_stale: boolean
+          last_price_snapshot: Json | null
+          name: string
+          preset: string
+          square_bindings: Json
+          thumbnail_path: string | null
+          updated_at: string
+          user_id: string
+          width: number
+        }
+        Insert: {
+          canvas_json?: Json
+          created_at?: string
+          height?: number
+          id?: string
+          is_stale?: boolean
+          last_price_snapshot?: Json | null
+          name?: string
+          preset?: string
+          square_bindings?: Json
+          thumbnail_path?: string | null
+          updated_at?: string
+          user_id: string
+          width?: number
+        }
+        Update: {
+          canvas_json?: Json
+          created_at?: string
+          height?: number
+          id?: string
+          is_stale?: boolean
+          last_price_snapshot?: Json | null
+          name?: string
+          preset?: string
+          square_bindings?: Json
+          thumbnail_path?: string | null
+          updated_at?: string
+          user_id?: string
+          width?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
