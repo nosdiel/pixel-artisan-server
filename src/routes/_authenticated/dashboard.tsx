@@ -68,13 +68,15 @@ function Dashboard() {
                     <span>{img.width}×{img.height}</span>
                     <span className="text-success">−{saved}%</span>
                   </div>
-                  {img.template_id && (
-                    <Link to="/editor" search={{ template: img.template_id }} className="block mt-2">
-                      <Button variant="outline" size="sm" className="w-full">
-                        <Pencil className="size-3.5 mr-1.5" /> Edit as template
-                      </Button>
-                    </Link>
-                  )}
+                  <Link
+                    to="/editor"
+                    search={img.template_id ? { template: img.template_id } : { image: img.id }}
+                    className="block mt-2"
+                  >
+                    <Button variant="outline" size="sm" className="w-full">
+                      <Pencil className="size-3.5 mr-1.5" /> {img.template_id ? "Edit template" : "Use as template"}
+                    </Button>
+                  </Link>
                 </div>
               </div>
             );
