@@ -152,7 +152,7 @@ function EditorPage() {
 
   // Add helpers
   const addImageFromUrl = async (url: string) => {
-    const fc = fcRef.current; if (!fc) return;
+    const fc = fcRef.current; if (!fc || !fabric) return;
     const img = await fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
     const scale = Math.min(max / img.width!, max / img.height!, 1);
@@ -167,7 +167,7 @@ function EditorPage() {
     e.target.value = "";
   };
   const addText = () => {
-    const fc = fcRef.current; if (!fc) return;
+    const fc = fcRef.current; if (!fc || !fabric) return;
     const t = new fabric.IText("Your text", {
       left: fc.width! / 2 - 200, top: fc.height! / 2 - 40, fontSize: 80, fill: "#111827",
       fontFamily: "Inter", originX: "left", originY: "top",
@@ -175,9 +175,9 @@ function EditorPage() {
     fc.add(t); fc.setActiveObject(t); fc.renderAll();
   };
   const addShape = (kind: "rect" | "circle" | "triangle") => {
-    const fc = fcRef.current; if (!fc) return;
+    const fc = fcRef.current; if (!fc || !fabric) return;
     const common = { left: fc.width! / 2 - 150, top: fc.height! / 2 - 150, fill: "#3b82f6" };
-    let o: fabric.Object;
+    let o: Fabric.Object;
     if (kind === "rect") o = new fabric.Rect({ ...common, width: 300, height: 200 });
     else if (kind === "circle") o = new fabric.Circle({ ...common, radius: 120 });
     else o = new fabric.Triangle({ ...common, width: 240, height: 240 });
@@ -198,8 +198,8 @@ function EditorPage() {
   const flipH = () => { if (a) update(() => a.set("flipX", !a.flipX)); };
   const flipV = () => { if (a) update(() => a.set("flipY", !a.flipY)); };
 
-  const isText = a instanceof fabric.IText || a instanceof fabric.Textbox;
-  const isImage = a instanceof fabric.FabricImage;
+  const isText = !!fabric && (a instanceof fabric.IText || a instanceof fabric.Textbox);
+  const isImage = !!fabric && a instanceof fabric.FabricImage;
   const objects = fcRef.current?.getObjects() ?? [];
 
   const onSave = async () => {
