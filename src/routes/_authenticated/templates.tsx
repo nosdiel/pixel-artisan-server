@@ -135,7 +135,9 @@ function TemplatesPage() {
             <span className="font-medium">Background sync in progress</span>
             <span className="tabular-nums text-muted-foreground">{processed} items processed</span>
           </div>
-          <Progress value={undefined} className="h-2" />
+          <div className="h-2 w-full rounded-full bg-primary/15 overflow-hidden">
+            <div className="h-full w-1/3 bg-primary animate-[indeterminate_1.4s_ease-in-out_infinite]" />
+          </div>
           <p className="text-xs text-muted-foreground mt-2">You can navigate away — the sync will resume if you return before it finishes.</p>
         </div>
       )}
