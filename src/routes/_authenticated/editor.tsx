@@ -832,6 +832,23 @@ function EditorPage() {
           <Button variant="ghost" size="sm" onClick={() => setZoom((z) => Math.min(2, z + 0.1))}><ZoomIn className="size-4" /></Button>
           <Button variant="ghost" size="sm" onClick={() => setZoom(getFitZoom())}><Maximize2 className="size-4" /></Button>
           <div className="flex-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              const { data } = await supabase
+                .from("square_items_cache")
+                .select("square_item_id, name, description, price_cents, currency")
+                .order("name", { ascending: true });
+              const items = (data ?? []) as SquareCacheItem[];
+              setSquareItems(items);
+              const n = refreshBoundTexts(items);
+              toast.success(n ? `Updated ${n} bound layer${n === 1 ? "" : "s"}` : "All bound layers up to date");
+            }}
+            title="Refresh bound text layers from Square cache"
+          >
+            <RefreshCw className="size-4 mr-1.5" /> Refresh prices
+          </Button>
           <Button onClick={onSave} disabled={saving}>
             <Save className="size-4 mr-1.5" /> {saving ? "Saving…" : "Save"}
           </Button>
