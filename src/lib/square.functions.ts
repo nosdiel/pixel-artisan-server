@@ -59,7 +59,7 @@ function flattenItem(item: SquareItem) {
     category: item.item_data?.category_id ?? null,
     price_cents: v?.price_money?.amount ?? null,
     currency: v?.price_money?.currency ?? "USD",
-    raw: item as unknown as Record<string, unknown>,
+    raw: item as unknown as import("@/integrations/supabase/types").Json,
   };
 }
 
