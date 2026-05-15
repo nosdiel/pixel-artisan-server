@@ -531,7 +531,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath", "squareBinding"]));
+    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath", "squareBinding", "videoStoragePath"]));
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(json);
