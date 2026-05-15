@@ -19,7 +19,7 @@ import {
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
   ArrowUp, ArrowDown, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2,
   Image as ImageIcon, Layers, Eye, EyeOff, Bold, Italic, Underline,
-  AlignLeft, AlignCenter, AlignRight, Plus,
+  AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw,
 } from "lucide-react";
 
 const PRESETS: Record<string, { w: number; h: number; label: string }> = {
@@ -38,6 +38,17 @@ type Asset = { id: string; title: string; url: string; path: string };
 type PendingBaseImage = { url: string; path: string };
 type GalleryImageRow = { id: string; title: string; preset: string | null; width: number; height: number; variants: Array<{ path: string; format: string }> | null };
 type FabricModule = typeof import("fabric");
+type SquareCacheItem = { square_item_id: string; name: string | null; description: string | null; price_cents: number | null; currency: string | null };
+type SquareField = "price" | "name" | "description";
+type SquareBinding = { itemId: string; field: SquareField };
+
+function formatSquareValue(item: SquareCacheItem | undefined, field: SquareField): string {
+  if (!item) return "";
+  if (field === "name") return item.name ?? "";
+  if (field === "description") return item.description ?? "";
+  if (item.price_cents == null) return "";
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: item.currency || "USD" }).format(item.price_cents / 100);
+}
 
 function extractStoragePath(src: string) {
   try {
@@ -89,6 +100,7 @@ function EditorPage() {
   const [customFonts, setCustomFonts] = useState<string[]>([]);
   const [uploadingFont, setUploadingFont] = useState(false);
   const fontInputRef = useRef<HTMLInputElement>(null);
+  const [squareItems, setSquareItems] = useState<SquareCacheItem[]>([]);
   const navigate = useNavigate();
 
   const getFitZoom = useCallback((presetKey = preset) => {
@@ -330,6 +342,42 @@ function EditorPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [fabric]);
 
+  // Load Square catalog cache (for binding text layers to item fields)
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("square_items_cache")
+        .select("square_item_id, name, description, price_cents, currency")
+        .order("name", { ascending: true });
+      setSquareItems((data ?? []) as SquareCacheItem[]);
+    })();
+  }, []);
+
+  const refreshBoundTexts = useCallback((items: SquareCacheItem[]) => {
+    const fc = fcRef.current;
+    if (!fc || !fabric || items.length === 0) return 0;
+    const byId = new Map(items.map((i) => [i.square_item_id, i]));
+    let touched = 0;
+    for (const o of fc.getObjects()) {
+      const b = (o as any).squareBinding as SquareBinding | undefined;
+      if (!b) continue;
+      if (!(o instanceof fabric.IText || o instanceof fabric.Textbox)) continue;
+      const next = formatSquareValue(byId.get(b.itemId), b.field);
+      if (next && (o as Fabric.IText).text !== next) {
+        (o as Fabric.IText).set("text", next);
+        touched++;
+      }
+    }
+    if (touched) fc.requestRenderAll();
+    return touched;
+  }, [fabric]);
+
+  // Sync bound text layers from cache after items load or template loads
+  useEffect(() => {
+    if (!fabric || !squareItems.length) return;
+    refreshBoundTexts(squareItems);
+  }, [fabric, squareItems, pendingCanvasJson, refreshBoundTexts]);
+
   // Hydrate canvas from saved template JSON once canvas exists
   useEffect(() => {
     const fc = fcRef.current;
@@ -474,7 +522,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath"]));
+    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath", "squareBinding"]));
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(json);
@@ -609,7 +657,7 @@ function EditorPage() {
       fc.setZoom(1);
       fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = (fc as any).toJSON(["imageStoragePath"]);
+      const canvasJson = (fc as any).toJSON(["imageStoragePath", "squareBinding"]);
       fc.setZoom(prevZoom);
       fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
 
@@ -784,6 +832,23 @@ function EditorPage() {
           <Button variant="ghost" size="sm" onClick={() => setZoom((z) => Math.min(2, z + 0.1))}><ZoomIn className="size-4" /></Button>
           <Button variant="ghost" size="sm" onClick={() => setZoom(getFitZoom())}><Maximize2 className="size-4" /></Button>
           <div className="flex-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              const { data } = await supabase
+                .from("square_items_cache")
+                .select("square_item_id, name, description, price_cents, currency")
+                .order("name", { ascending: true });
+              const items = (data ?? []) as SquareCacheItem[];
+              setSquareItems(items);
+              const n = refreshBoundTexts(items);
+              toast.success(n ? `Updated ${n} bound layer${n === 1 ? "" : "s"}` : "All bound layers up to date");
+            }}
+            title="Refresh bound text layers from Square cache"
+          >
+            <RefreshCw className="size-4 mr-1.5" /> Refresh prices
+          </Button>
           <Button onClick={onSave} disabled={saving}>
             <Save className="size-4 mr-1.5" /> {saving ? "Saving…" : "Save"}
           </Button>
@@ -866,6 +931,63 @@ function EditorPage() {
                   <ToggleGroupItem value="center"><AlignCenter className="size-4" /></ToggleGroupItem>
                   <ToggleGroupItem value="right"><AlignRight className="size-4" /></ToggleGroupItem>
                 </ToggleGroup>
+                <Separator />
+                <div className="space-y-2">
+                  <Label className="text-xs flex items-center gap-1.5"><Tag className="size-3" /> Square binding</Label>
+                  {squareItems.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground">No cached items. Sync your Square catalog from the Templates page first.</p>
+                  ) : (
+                    <>
+                      <Select
+                        value={((a as any).squareBinding as SquareBinding | undefined)?.itemId ?? "__none__"}
+                        onValueChange={(v) => update(() => {
+                          if (v === "__none__") {
+                            delete (a as any).squareBinding;
+                            return;
+                          }
+                          const prev = ((a as any).squareBinding as SquareBinding | undefined);
+                          const field: SquareField = prev?.field ?? "price";
+                          (a as any).squareBinding = { itemId: v, field } as SquareBinding;
+                          const item = squareItems.find((s) => s.square_item_id === v);
+                          const next = formatSquareValue(item, field);
+                          if (next) (a as Fabric.IText).set("text", next);
+                        })}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Bind to item…" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">— Not bound —</SelectItem>
+                          {squareItems.map((it) => (
+                            <SelectItem key={it.square_item_id} value={it.square_item_id}>
+                              {it.name ?? it.square_item_id}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {((a as any).squareBinding as SquareBinding | undefined) && (
+                        <Select
+                          value={((a as any).squareBinding as SquareBinding).field}
+                          onValueChange={(v) => update(() => {
+                            const b = (a as any).squareBinding as SquareBinding;
+                            b.field = v as SquareField;
+                            const item = squareItems.find((s) => s.square_item_id === b.itemId);
+                            const next = formatSquareValue(item, b.field);
+                            if (next) (a as Fabric.IText).set("text", next);
+                          })}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="price">Price</SelectItem>
+                            <SelectItem value="name">Name</SelectItem>
+                            <SelectItem value="description">Description</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                      <p className="text-[11px] text-muted-foreground">
+                        Text auto-updates when you sync Square or click Refresh prices.
+                      </p>
+                    </>
+                  )}
+                </div>
               </>
             )}
 
