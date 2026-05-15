@@ -83,6 +83,10 @@ export function flattenItem(item: SquareItem) {
   };
 }
 
+function uniqueBySquareItemId<T extends { square_item_id: string }>(rows: T[]) {
+  return Array.from(new Map(rows.map((row) => [row.square_item_id, row])).values());
+}
+
 export type ConnectionSource = {
   source: string;
   access_token: string | null;
@@ -112,7 +116,7 @@ export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
     collected.push(...page.items);
     cursor = page.cursor;
   } while (cursor);
-  const flat = collected;
+  const flat = uniqueBySquareItemId(collected);
 
   const priceMap: Record<string, number | null> = {};
   for (const f of flat) priceMap[f.square_item_id] = f.price_cents;
@@ -120,7 +124,9 @@ export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
   await supabaseAdmin.from("square_items_cache").delete().eq("user_id", userId);
   if (flat.length) {
     const rows = flat.map((f) => ({ ...f, user_id: userId }));
-    const { error } = await supabaseAdmin.from("square_items_cache").insert(rows);
+    const { error } = await supabaseAdmin
+      .from("square_items_cache")
+      .upsert(rows, { onConflict: "user_id,square_item_id" });
     if (error) throw new Error(error.message);
   }
 
