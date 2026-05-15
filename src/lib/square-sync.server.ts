@@ -141,9 +141,6 @@ export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
   } while (cursor);
   const flat = uniqueBySquareItemId(collected);
 
-  const priceMap: Record<string, number | null> = {};
-  for (const f of flat) priceMap[f.square_item_id] = f.price_cents;
-
   await supabaseAdmin.from("square_items_cache").delete().eq("user_id", userId);
   if (flat.length) {
     const rows = flat.map((f) => ({ ...f, user_id: userId }));
@@ -158,58 +155,101 @@ export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
     .update({ last_sync_at: new Date().toISOString() })
     .eq("user_id", userId);
 
-  const { data: templates } = await supabaseAdmin
-    .from("templates")
-    .select("id, square_bindings, last_price_snapshot, is_stale")
-    .eq("user_id", userId);
-
-  let staleCount = 0;
-  for (const t of templates ?? []) {
-    const bindings = (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
-    if (!bindings.length) continue;
-    const snapshot = (t.last_price_snapshot as Record<string, number | null> | null) ?? {};
-    let stale = false;
-    for (const b of bindings) {
-      const current = priceMap[b.square_item_id] ?? null;
-      if (snapshot[b.square_item_id] !== current) stale = true;
-    }
-    if (stale && !t.is_stale) {
-      staleCount++;
-      await supabaseAdmin.from("templates").update({ is_stale: true }).eq("id", t.id);
-    }
-  }
-
-  return { itemCount: flat.length, staleCount };
+  const { staleCount, updatedCount } = await recomputeStaleTemplates(userId);
+  return { itemCount: flat.length, staleCount, updatedCount };
 }
 
 /** Compare each template's last price snapshot against current cache and flip is_stale on changes. */
 export async function recomputeStaleTemplates(userId: string) {
   const { data: items } = await supabaseAdmin
     .from("square_items_cache")
-    .select("square_item_id, price_cents")
+    .select("square_item_id, name, description, price_cents, currency")
     .eq("user_id", userId);
   const priceMap: Record<string, number | null> = {};
-  for (const it of items ?? []) priceMap[it.square_item_id] = it.price_cents;
+  const itemMap = new Map<string, { name: string | null; description: string | null; price_cents: number | null; currency: string | null }>();
+  for (const it of items ?? []) {
+    priceMap[it.square_item_id] = it.price_cents;
+    itemMap.set(it.square_item_id, {
+      name: it.name,
+      description: it.description,
+      price_cents: it.price_cents,
+      currency: it.currency,
+    });
+  }
 
   const { data: templates } = await supabaseAdmin
     .from("templates")
-    .select("id, square_bindings, last_price_snapshot, is_stale")
+    .select("id, square_bindings, last_price_snapshot, is_stale, canvas_json")
     .eq("user_id", userId);
 
   let staleCount = 0;
+  let updatedCount = 0;
   for (const t of templates ?? []) {
     const bindings = (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
-    if (!bindings.length) continue;
     const snapshot = (t.last_price_snapshot as Record<string, number | null> | null) ?? {};
-    let stale = false;
+
+    // 1. Auto-apply per-text-layer bindings inside canvas_json (this is what users actually see)
+    const { json: nextCanvas, changed } = applyBoundPricesToCanvas(t.canvas_json, itemMap);
+
+    // 2. Determine if any template-level bound item's price changed since last snapshot
+    let priceChanged = false;
     for (const b of bindings) {
       const current = priceMap[b.square_item_id] ?? null;
-      if (snapshot[b.square_item_id] !== current) stale = true;
+      if (snapshot[b.square_item_id] !== current) priceChanged = true;
     }
-    if (stale && !t.is_stale) {
+
+    if (changed) {
+      // Refresh snapshot to current prices and clear stale flag (canvas now matches catalog)
+      const nextSnapshot: Record<string, number | null> = { ...snapshot };
+      for (const b of bindings) nextSnapshot[b.square_item_id] = priceMap[b.square_item_id] ?? null;
+      await supabaseAdmin
+        .from("templates")
+        .update({ canvas_json: nextCanvas as Json, last_price_snapshot: nextSnapshot, is_stale: false })
+        .eq("id", t.id);
+      updatedCount++;
+    } else if (priceChanged && !t.is_stale) {
+      // Template-level binding price changed but no auto-updatable text layers — flag for manual review
       staleCount++;
       await supabaseAdmin.from("templates").update({ is_stale: true }).eq("id", t.id);
     }
   }
-  return staleCount;
+  return { staleCount, updatedCount, total: staleCount + updatedCount };
+}
+
+type CacheItem = { name: string | null; description: string | null; price_cents: number | null; currency: string | null };
+
+function formatBoundValue(item: CacheItem | undefined, field: string): string {
+  if (!item) return "";
+  if (field === "name") return item.name ?? "";
+  if (field === "description") return item.description ?? "";
+  if (item.price_cents == null) return "";
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: item.currency || "USD" }).format(item.price_cents / 100);
+  } catch {
+    return `$${(item.price_cents / 100).toFixed(2)}`;
+  }
+}
+
+/** Walk Fabric canvas JSON and rewrite text layers with `squareBinding` to current values. */
+function applyBoundPricesToCanvas(canvasJson: unknown, itemMap: Map<string, CacheItem>): { json: unknown; changed: boolean } {
+  if (!canvasJson || typeof canvasJson !== "object") return { json: canvasJson, changed: false };
+  const next = JSON.parse(JSON.stringify(canvasJson)) as Record<string, unknown>;
+  let changed = false;
+
+  const visit = (obj: Record<string, unknown>) => {
+    const binding = obj.squareBinding as { itemId?: string; field?: string } | undefined;
+    if (binding?.itemId && binding.field) {
+      const formatted = formatBoundValue(itemMap.get(binding.itemId), binding.field);
+      if (formatted && obj.text !== formatted) {
+        obj.text = formatted;
+        changed = true;
+      }
+    }
+    const kids = (obj.objects ?? (obj as Record<string, unknown>)._objects) as unknown;
+    if (Array.isArray(kids)) for (const child of kids) if (child && typeof child === "object") visit(child as Record<string, unknown>);
+  };
+
+  const objs = (next.objects ?? []) as unknown;
+  if (Array.isArray(objs)) for (const o of objs) if (o && typeof o === "object") visit(o as Record<string, unknown>);
+  return { json: next, changed };
 }
