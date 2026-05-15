@@ -342,6 +342,42 @@ function EditorPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [fabric]);
 
+  // Load Square catalog cache (for binding text layers to item fields)
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("square_items_cache")
+        .select("square_item_id, name, description, price_cents, currency")
+        .order("name", { ascending: true });
+      setSquareItems((data ?? []) as SquareCacheItem[]);
+    })();
+  }, []);
+
+  const refreshBoundTexts = useCallback((items: SquareCacheItem[]) => {
+    const fc = fcRef.current;
+    if (!fc || !fabric || items.length === 0) return 0;
+    const byId = new Map(items.map((i) => [i.square_item_id, i]));
+    let touched = 0;
+    for (const o of fc.getObjects()) {
+      const b = (o as any).squareBinding as SquareBinding | undefined;
+      if (!b) continue;
+      if (!(o instanceof fabric.IText || o instanceof fabric.Textbox)) continue;
+      const next = formatSquareValue(byId.get(b.itemId), b.field);
+      if (next && (o as Fabric.IText).text !== next) {
+        (o as Fabric.IText).set("text", next);
+        touched++;
+      }
+    }
+    if (touched) fc.requestRenderAll();
+    return touched;
+  }, [fabric]);
+
+  // Sync bound text layers from cache after items load or template loads
+  useEffect(() => {
+    if (!fabric || !squareItems.length) return;
+    refreshBoundTexts(squareItems);
+  }, [fabric, squareItems, pendingCanvasJson, refreshBoundTexts]);
+
   // Hydrate canvas from saved template JSON once canvas exists
   useEffect(() => {
     const fc = fcRef.current;
