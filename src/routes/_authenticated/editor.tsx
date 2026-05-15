@@ -62,7 +62,6 @@ function EditorPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(templateIdParam ?? null);
   const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
-  const [bootstrapping, setBootstrapping] = useState<boolean>(!!templateIdParam);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -84,7 +83,6 @@ function EditorPage() {
         .maybeSingle();
       if (error || !data) {
         toast.error("Could not load template");
-        setBootstrapping(false);
         return;
       }
       setTemplateId(data.id);
@@ -135,7 +133,6 @@ function EditorPage() {
         historyRef.current = { stack: [], index: -1, suspend: false };
         pushHistory();
         setPendingCanvasJson(null);
-        setBootstrapping(false);
         refresh();
       }
     })();
