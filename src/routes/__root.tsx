@@ -80,9 +80,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "description", content: "Edit, auto-compress, and serve digital-signage images at scale. Built-in editor, gallery, public API, and Square menu sync." },
       { name: "author", content: "Pixelboard" },
       { property: "og:title", content: "Pixelboard — Image compression & editor for digital signage" },
-      { property: "og:description", content: "Edit, auto-compress, and serve digital-signage images at scale." },
+      { property: "og:description", content: "Edit, auto-compress, and serve digital-signage images at scale. Built-in editor, gallery, public API, and Square menu sync." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
+      { name: "twitter:title", content: "Pixelboard — Image compression & editor for digital signage" },
+      { name: "twitter:description", content: "Edit, auto-compress, and serve digital-signage images at scale. Built-in editor, gallery, public API, and Square menu sync." },
     ],
     links: [
       {
