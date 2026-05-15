@@ -34,8 +34,21 @@ const PRESETS: Record<string, { w: number; h: number; label: string }> = {
 const FONTS = ["Inter", "Arial", "Georgia", "Times New Roman", "Courier New", "Impact", "Comic Sans MS", "Verdana"];
 const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
 
-type Asset = { id: string; title: string; url: string };
+type Asset = { id: string; title: string; url: string; path: string };
+type PendingBaseImage = { url: string; path: string };
 type FabricModule = typeof import("fabric");
+
+function extractStoragePath(src: string) {
+  try {
+    const url = new URL(src);
+    const markers = ["/storage/v1/object/sign/images/", "/storage/v1/object/public/images/"];
+    const marker = markers.find((m) => url.pathname.includes(m));
+    if (!marker) return null;
+    return decodeURIComponent(url.pathname.slice(url.pathname.indexOf(marker) + marker.length));
+  } catch {
+    return null;
+  }
+}
 
 export const Route = createFileRoute("/_authenticated/editor")({
   component: EditorPage,
@@ -63,8 +76,29 @@ function EditorPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(templateIdParam ?? null);
   const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
-  const [pendingBaseImageUrl, setPendingBaseImageUrl] = useState<string | null>(null);
+  const [pendingBaseImage, setPendingBaseImage] = useState<PendingBaseImage | null>(null);
   const navigate = useNavigate();
+
+  const withFreshImageUrls = useCallback(async (canvasJson: unknown) => {
+    const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
+    const refreshObject = async (obj: any): Promise<void> => {
+      if (!obj || typeof obj !== "object") return;
+      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : typeof obj.src === "string" ? extractStoragePath(obj.src) : null;
+      if (path) {
+        const { data } = await supabase.storage.from("images").createSignedUrl(path, 3600);
+        if (data?.signedUrl) {
+          obj.src = data.signedUrl;
+          obj.crossOrigin = "anonymous";
+          obj.imageStoragePath = path;
+        }
+      }
+      await Promise.all(((obj.objects ?? obj._objects ?? []) as any[]).map(refreshObject));
+      if (obj.clipPath) await refreshObject(obj.clipPath);
+    };
+    await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
+    if (json.backgroundImage) await refreshObject(json.backgroundImage);
+    return json;
+  }, []);
 
   useEffect(() => {
     let mounted = true;
