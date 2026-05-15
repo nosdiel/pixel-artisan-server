@@ -268,3 +268,32 @@ export const listTemplatesWithStatus = createServerFn({ method: "GET" })
     if (error) throw new Error(error.message);
     return { templates: data ?? [] };
   });
+
+export const setTemplateBindings = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      templateId: z.string().uuid(),
+      squareItemIds: z.array(z.string().min(1).max(200)).max(500),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    const ids = Array.from(new Set(data.squareItemIds));
+    const snap: Record<string, number | null> = {};
+    if (ids.length) {
+      const { data: items, error: itErr } = await supabase
+        .from("square_items_cache")
+        .select("square_item_id, price_cents")
+        .in("square_item_id", ids);
+      if (itErr) throw new Error(itErr.message);
+      for (const it of items ?? []) snap[it.square_item_id] = it.price_cents;
+    }
+    const bindings = ids.map((square_item_id) => ({ square_item_id }));
+    const { error } = await supabase
+      .from("templates")
+      .update({ square_bindings: bindings, last_price_snapshot: snap, is_stale: false })
+      .eq("id", data.templateId);
+    if (error) throw new Error(error.message);
+    return { ok: true, count: ids.length };
+  });

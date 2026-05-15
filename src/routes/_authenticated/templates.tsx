@@ -4,6 +4,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
 import {
@@ -13,6 +23,7 @@ import {
   startSquareSyncJob,
   stepSquareSyncJob,
   getLatestSquareSyncJob,
+  setTemplateBindings,
 } from "@/lib/square.functions";
 
 export const Route = createFileRoute("/_authenticated/templates")({ component: TemplatesPage });
@@ -33,6 +44,7 @@ function TemplatesPage() {
   const startJob = useServerFn(startSquareSyncJob);
   const stepJob = useServerFn(stepSquareSyncJob);
   const fetchLatestJob = useServerFn(getLatestSquareSyncJob);
+  const saveBindings = useServerFn(setTemplateBindings);
 
   const itemsQ = useQuery({ queryKey: ["square-items"], queryFn: () => fetchItems() });
   const tplQ = useQuery({ queryKey: ["templates"], queryFn: () => fetchTemplates() });
@@ -97,6 +109,33 @@ function TemplatesPage() {
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+
+  const [editing, setEditing] = useState<{ id: string; name: string } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const bindM = useMutation({
+    mutationFn: (vars: { templateId: string; squareItemIds: string[] }) =>
+      saveBindings({ data: vars }),
+    onSuccess: () => {
+      toast.success("Bindings saved");
+      qc.invalidateQueries({ queryKey: ["templates"] });
+      setEditing(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const openEdit = (t: { id: string; name: string; square_bindings: unknown }) => {
+    const bindings = (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
+    setSelected(new Set(bindings.map((b) => b.square_item_id)));
+    setSearch("");
+    setEditing({ id: t.id, name: t.name });
+  };
+
+  const filteredItems = (itemsQ.data?.items ?? []).filter((it) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (it.name ?? "").toLowerCase().includes(q) || it.square_item_id.toLowerCase().includes(q);
   });
 
   const lastJob = latestJobQ.data?.job;
@@ -166,11 +205,16 @@ function TemplatesPage() {
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">{bindings.length} Square binding{bindings.length === 1 ? "" : "s"}</p>
                   </div>
-                  {t.is_stale && (
-                    <Button size="sm" variant="outline" onClick={() => freshM.mutate(t.id)} disabled={freshM.isPending}>
-                      Mark fresh
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => openEdit(t)}>
+                      Edit bindings
                     </Button>
-                  )}
+                    {t.is_stale && (
+                      <Button size="sm" variant="outline" onClick={() => freshM.mutate(t.id)} disabled={freshM.isPending}>
+                        Mark fresh
+                      </Button>
+                    )}
+                  </div>
                 </li>
               );
             })}
@@ -203,6 +247,69 @@ function TemplatesPage() {
           </div>
         )}
       </section>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Bind Square items</DialogTitle>
+            <DialogDescription>
+              {editing ? `Choose catalog items to bind to "${editing.name}". Templates go stale when a bound item's price changes.` : null}
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            placeholder="Search items by name or ID…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="max-h-[50vh] overflow-y-auto rounded-md border border-border">
+            {!itemsQ.data?.items.length ? (
+              <p className="p-4 text-sm text-muted-foreground">No cached Square items. Run a sync first.</p>
+            ) : !filteredItems.length ? (
+              <p className="p-4 text-sm text-muted-foreground">No matches.</p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {filteredItems.map((it) => {
+                  const checked = selected.has(it.square_item_id);
+                  return (
+                    <li key={it.square_item_id} className="flex items-center gap-3 px-3 py-2">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) => {
+                          setSelected((prev) => {
+                            const next = new Set(prev);
+                            if (v) next.add(it.square_item_id);
+                            else next.delete(it.square_item_id);
+                            return next;
+                          });
+                        }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm">{it.name ?? "—"}</p>
+                        <p className="font-mono text-xs text-muted-foreground truncate">{it.square_item_id}</p>
+                      </div>
+                      <span className="text-sm tabular-nums text-muted-foreground">
+                        {formatPrice(it.price_cents, it.currency)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+          <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
+            <span className="text-xs text-muted-foreground">{selected.size} selected</span>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setEditing(null)} disabled={bindM.isPending}>Cancel</Button>
+              <Button
+                onClick={() => editing && bindM.mutate({ templateId: editing.id, squareItemIds: Array.from(selected) })}
+                disabled={bindM.isPending}
+              >
+                {bindM.isPending ? "Saving…" : "Save bindings"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
