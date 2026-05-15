@@ -19,7 +19,7 @@ import {
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
   ArrowUp, ArrowDown, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2,
   Image as ImageIcon, Layers, Eye, EyeOff, Bold, Italic, Underline,
-  AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw,
+  AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw, Video as VideoIcon,
 } from "lucide-react";
 
 const PRESETS: Record<string, { w: number; h: number; label: string }> = {
@@ -116,7 +116,16 @@ function EditorPage() {
     const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
     const refreshObject = async (obj: any): Promise<void> => {
       if (!obj || typeof obj !== "object") return;
-      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : typeof obj.src === "string" ? extractStoragePath(obj.src) : null;
+      const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : null;
+      if (videoPath) {
+        const { data } = await supabase.storage.from("images").createSignedUrl(videoPath, 3600);
+        if (data?.signedUrl) {
+          obj.src = data.signedUrl;
+          obj.crossOrigin = "anonymous";
+          obj.videoStoragePath = videoPath;
+        }
+      }
+      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : (!videoPath && typeof obj.src === "string" ? extractStoragePath(obj.src) : null);
       if (path) {
         const { data } = await supabase.storage.from("images").createSignedUrl(path, 3600);
         if (data?.signedUrl) {
