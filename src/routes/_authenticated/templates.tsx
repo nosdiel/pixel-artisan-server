@@ -24,6 +24,7 @@ import {
   stepSquareSyncJob,
   getLatestSquareSyncJob,
   setTemplateBindings,
+  deleteTemplate,
 } from "@/lib/square.functions";
 
 export const Route = createFileRoute("/_authenticated/templates")({ component: TemplatesPage });
@@ -45,6 +46,7 @@ function TemplatesPage() {
   const stepJob = useServerFn(stepSquareSyncJob);
   const fetchLatestJob = useServerFn(getLatestSquareSyncJob);
   const saveBindings = useServerFn(setTemplateBindings);
+  const deleteTpl = useServerFn(deleteTemplate);
 
   const itemsQ = useQuery({ queryKey: ["square-items"], queryFn: () => fetchItems() });
   const tplQ = useQuery({ queryKey: ["templates"], queryFn: () => fetchTemplates() });
@@ -106,6 +108,15 @@ function TemplatesPage() {
     mutationFn: (templateId: string) => fresh({ data: { templateId } }),
     onSuccess: () => {
       toast.success("Template marked fresh");
+      qc.invalidateQueries({ queryKey: ["templates"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const deleteM = useMutation({
+    mutationFn: (templateId: string) => deleteTpl({ data: { templateId } }),
+    onSuccess: () => {
+      toast.success("Template deleted");
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -217,6 +228,19 @@ function TemplatesPage() {
                         Mark fresh
                       </Button>
                     )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => {
+                        if (confirm(`Delete template "${t.name}"? This cannot be undone.`)) {
+                          deleteM.mutate(t.id);
+                        }
+                      }}
+                      disabled={deleteM.isPending}
+                    >
+                      Delete
+                    </Button>
                   </div>
                 </li>
               );
