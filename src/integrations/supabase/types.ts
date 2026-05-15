@@ -200,6 +200,45 @@ export type Database = {
         }
         Relationships: []
       }
+      square_sync_jobs: {
+        Row: {
+          cursor: string | null
+          error: string | null
+          finished_at: string | null
+          id: string
+          processed_items: number
+          stale_templates: number
+          started_at: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cursor?: string | null
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          processed_items?: number
+          stale_templates?: number
+          started_at?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cursor?: string | null
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          processed_items?: number
+          stale_templates?: number
+          started_at?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       template_renders: {
         Row: {
           id: string
