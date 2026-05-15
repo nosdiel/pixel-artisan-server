@@ -19,7 +19,7 @@ import {
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
   ArrowUp, ArrowDown, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2,
   Image as ImageIcon, Layers, Eye, EyeOff, Bold, Italic, Underline,
-  AlignLeft, AlignCenter, AlignRight, Plus,
+  AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw,
 } from "lucide-react";
 
 const PRESETS: Record<string, { w: number; h: number; label: string }> = {
@@ -38,6 +38,17 @@ type Asset = { id: string; title: string; url: string; path: string };
 type PendingBaseImage = { url: string; path: string };
 type GalleryImageRow = { id: string; title: string; preset: string | null; width: number; height: number; variants: Array<{ path: string; format: string }> | null };
 type FabricModule = typeof import("fabric");
+type SquareCacheItem = { square_item_id: string; name: string | null; description: string | null; price_cents: number | null; currency: string | null };
+type SquareField = "price" | "name" | "description";
+type SquareBinding = { itemId: string; field: SquareField };
+
+function formatSquareValue(item: SquareCacheItem | undefined, field: SquareField): string {
+  if (!item) return "";
+  if (field === "name") return item.name ?? "";
+  if (field === "description") return item.description ?? "";
+  if (item.price_cents == null) return "";
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: item.currency || "USD" }).format(item.price_cents / 100);
+}
 
 function extractStoragePath(src: string) {
   try {
