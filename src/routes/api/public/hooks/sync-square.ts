@@ -8,7 +8,7 @@ export const Route = createFileRoute("/api/public/hooks/sync-square")({
       POST: async () => {
         const { data: connections, error } = await supabaseAdmin
           .from("square_connections")
-          .select("user_id, source, access_token, environment, site_url")
+          .select("user_id, source, access_token, environment, site_url, client_id, client_secret, restaurant_guid")
           .eq("auto_sync_enabled", true);
         if (error) {
           return new Response(JSON.stringify({ error: error.message }), { status: 500 });
