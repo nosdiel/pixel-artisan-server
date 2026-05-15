@@ -33,9 +33,10 @@ export async function fetchOnlineSiteCatalog(siteUrl: string): Promise<FlatItem[
   const html = await res.text();
   const products = extractJsonLdProducts(html);
   if (!products.length) {
-    throw new Error(
-      "No products found on the page. Make sure the URL points to a Square Online menu/store page that lists items.",
-    );
+    // Square Online pages render most items via JS, so JSON-LD may be empty.
+    // Return an empty list rather than throwing — the sync job will simply
+    // record 0 items and the user can adjust the URL or use the API source.
+    return [];
   }
   return products.map(productToFlat);
 }
