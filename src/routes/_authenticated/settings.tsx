@@ -78,7 +78,12 @@ function SettingsPage() {
         setSyncProgress(r.processed);
         if (r.done) {
           if (r.status === "succeeded") {
-            toast.success(`Synced ${r.processed} items · ${r.staleCount ?? 0} templates flagged stale`);
+            const updated = r.updatedCount ?? 0;
+            const stale = r.staleCount ?? 0;
+            const parts = [`Synced ${r.processed} items`];
+            if (updated) parts.push(`${updated} auto-updated`);
+            if (stale) parts.push(`${stale} flagged stale`);
+            toast.success(parts.join(" · "));
             setLastSync(new Date().toISOString());
           }
           break;
