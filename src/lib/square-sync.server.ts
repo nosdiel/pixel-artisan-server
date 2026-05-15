@@ -104,9 +104,15 @@ export async function fetchSourcePage(conn: ConnectionSource, cursor?: string) {
 }
 
 /** Run sync + stale detection for a single user, using the admin client. */
-export async function syncUserCatalog(userId: string, token: string, env: string) {
-  const items = await fetchAllCatalog(token, env);
-  const flat = items.map(flattenItem);
+export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
+  const collected: ReturnType<typeof flattenItem>[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await fetchSourcePage(conn, cursor);
+    collected.push(...page.items);
+    cursor = page.cursor;
+  } while (cursor);
+  const flat = collected;
 
   const priceMap: Record<string, number | null> = {};
   for (const f of flat) priceMap[f.square_item_id] = f.price_cents;
