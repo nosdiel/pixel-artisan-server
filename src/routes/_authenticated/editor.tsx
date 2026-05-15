@@ -19,7 +19,7 @@ import {
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
   ArrowUp, ArrowDown, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2,
   Image as ImageIcon, Layers, Eye, EyeOff, Bold, Italic, Underline,
-  AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw,
+  AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw, Video as VideoIcon,
 } from "lucide-react";
 
 const PRESETS: Record<string, { w: number; h: number; label: string }> = {
@@ -116,7 +116,16 @@ function EditorPage() {
     const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
     const refreshObject = async (obj: any): Promise<void> => {
       if (!obj || typeof obj !== "object") return;
-      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : typeof obj.src === "string" ? extractStoragePath(obj.src) : null;
+      const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : null;
+      if (videoPath) {
+        const { data } = await supabase.storage.from("images").createSignedUrl(videoPath, 3600);
+        if (data?.signedUrl) {
+          obj.src = data.signedUrl;
+          obj.crossOrigin = "anonymous";
+          obj.videoStoragePath = videoPath;
+        }
+      }
+      const path = typeof obj.imageStoragePath === "string" ? obj.imageStoragePath : (!videoPath && typeof obj.src === "string" ? extractStoragePath(obj.src) : null);
       if (path) {
         const { data } = await supabase.storage.from("images").createSignedUrl(path, 3600);
         if (data?.signedUrl) {
@@ -386,6 +395,33 @@ function EditorPage() {
     (async () => {
       try {
         await fc.loadFromJSON(pendingCanvasJson as object);
+        // Rehydrate any video layers (loadFromJSON only restores them as still images)
+        if (fabric) {
+          for (const obj of fc.getObjects()) {
+            const vp = (obj as any).videoStoragePath as string | undefined;
+            const src = (obj as any).getSrc?.() as string | undefined;
+            if (!vp || !src || !(obj instanceof fabric.FabricImage)) continue;
+            try {
+              const video = document.createElement("video");
+              video.src = src;
+              video.crossOrigin = "anonymous";
+              video.muted = true;
+              video.loop = true;
+              video.playsInline = true;
+              video.autoplay = true;
+              await new Promise<void>((resolve, reject) => {
+                video.onloadeddata = () => resolve();
+                video.onerror = () => reject(new Error("video"));
+              });
+              video.width = video.videoWidth;
+              video.height = video.videoHeight;
+              (obj as any).setElement(video);
+              (obj as any).objectCaching = false;
+              try { await video.play(); } catch { /* blocked */ }
+              startVideoRaf(fc, video);
+            } catch { /* ignore */ }
+          }
+        }
         fc.renderAll();
       } finally {
         historyRef.current.suspend = false;
@@ -522,7 +558,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath", "squareBinding"]));
+    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath", "squareBinding", "videoStoragePath"]));
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(json);
@@ -568,6 +604,73 @@ function EditorPage() {
     }
     const { data: signed } = await supabase.storage.from("images").createSignedUrl(path, 3600);
     await addImageFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
+    e.target.value = "";
+  };
+
+  const videoRafRef = useRef<Set<number>>(new Set());
+  const startVideoRaf = (fc: Fabric.Canvas, video: HTMLVideoElement) => {
+    let rafId = 0;
+    const tick = () => {
+      if (video.paused || video.ended) {
+        videoRafRef.current.delete(rafId);
+        return;
+      }
+      fc.requestRenderAll();
+      rafId = requestAnimationFrame(tick);
+      videoRafRef.current.add(rafId);
+    };
+    rafId = requestAnimationFrame(tick);
+    videoRafRef.current.add(rafId);
+  };
+  const addVideoFromUrl = async (url: string, path?: string) => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const video = document.createElement("video");
+    video.src = url;
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    await new Promise<void>((resolve, reject) => {
+      video.onloadeddata = () => resolve();
+      video.onerror = () => reject(new Error("Could not load video"));
+    });
+    video.width = video.videoWidth;
+    video.height = video.videoHeight;
+    const img = new fabric.FabricImage(video, { objectCaching: false });
+    const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
+    const scale = Math.min(max / video.videoWidth, max / video.videoHeight, 1);
+    img.scale(scale);
+    img.set({
+      left: (fc.width! - video.videoWidth * scale) / 2,
+      top: (fc.height! - video.videoHeight * scale) / 2,
+    });
+    if (path) img.set("videoStoragePath", path);
+    fc.add(img); fc.setActiveObject(img);
+    try { await video.play(); } catch { /* autoplay may be blocked until interaction */ }
+    startVideoRaf(fc, video);
+    pushHistory(); refresh();
+  };
+  const onUploadVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error("Video too large (max 50MB)");
+      e.target.value = "";
+      return;
+    }
+    const { data: ud } = await supabase.auth.getUser();
+    if (!ud.user) { e.target.value = ""; return; }
+    const ext = file.name.split(".").pop()?.toLowerCase() || "mp4";
+    const path = `${ud.user.id}/editor-assets/${nanoid(10)}.${ext}`;
+    toast.info("Uploading video…");
+    const { error } = await supabase.storage.from("images").upload(path, file, { contentType: file.type || "video/mp4", upsert: true });
+    if (error) { toast.error(error.message); e.target.value = ""; return; }
+    const { data: signed } = await supabase.storage.from("images").createSignedUrl(path, 3600);
+    try {
+      await addVideoFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not place video");
+    }
     e.target.value = "";
   };
   const addText = () => {
@@ -657,7 +760,7 @@ function EditorPage() {
       fc.setZoom(1);
       fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = (fc as any).toJSON(["imageStoragePath", "squareBinding"]);
+      const canvasJson = (fc as any).toJSON(["imageStoragePath", "squareBinding", "videoStoragePath"]);
       fc.setZoom(prevZoom);
       fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
 
@@ -774,6 +877,10 @@ function EditorPage() {
               <label className="flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-sm cursor-pointer hover:bg-accent">
                 <Upload className="size-4" /> Upload image
                 <input type="file" accept="image/*" className="hidden" onChange={onUploadImage} />
+              </label>
+              <label className="flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-sm cursor-pointer hover:bg-accent">
+                <VideoIcon className="size-4" /> Upload video
+                <input type="file" accept="video/*" className="hidden" onChange={onUploadVideo} />
               </label>
             </div>
           </TabsContent>
