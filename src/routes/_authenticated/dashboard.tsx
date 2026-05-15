@@ -17,10 +17,11 @@ function Dashboard() {
     (async () => {
       const { data, error } = await supabase.from("images").select("*").order("created_at", { ascending: false });
       if (!error && data) {
-        setImages(data as ImageRow[]);
+        const rows = data as unknown as ImageRow[];
+        setImages(rows);
         // sign URLs for thumbnails
         const urls: Record<string, string> = {};
-        await Promise.all(data.map(async (img: ImageRow) => {
+        await Promise.all(rows.map(async (img) => {
           const v = img.variants?.[0];
           if (v) {
             const { data: u } = await supabase.storage.from("images").createSignedUrl(v.path, 3600);
