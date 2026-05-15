@@ -707,10 +707,35 @@ function EditorPage() {
             {isText && (
               <>
                 <div>
-                  <Label className="text-xs">Font</Label>
-                  <Select value={(a as Fabric.IText).fontFamily as string} onValueChange={(v) => update(() => (a as Fabric.IText).set("fontFamily", v))}>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Font</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      disabled={uploadingFont}
+                      onClick={() => fontInputRef.current?.click()}
+                    >
+                      <Upload className="size-3 mr-1" />
+                      {uploadingFont ? "Uploading…" : "Upload"}
+                    </Button>
+                  </div>
+                  <input
+                    ref={fontInputRef}
+                    type="file"
+                    accept=".otf,.ttf,.woff,.woff2,font/otf,font/ttf,font/woff,font/woff2"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void onUploadFont(f);
+                      e.target.value = "";
+                    }}
+                  />
+                  <Select value={(a as Fabric.IText).fontFamily as string} onValueChange={(v) => update(() => { (a as Fabric.IText).set("fontFamily", v); fcRef.current?.requestRenderAll(); })}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>{FONTS.map((f) => <SelectItem key={f} value={f} style={{ fontFamily: f }}>{f}</SelectItem>)}</SelectContent>
+                    <SelectContent>
+                      {[...FONTS, ...customFonts].map((f) => <SelectItem key={f} value={f} style={{ fontFamily: f }}>{f}</SelectItem>)}
+                    </SelectContent>
                   </Select>
                 </div>
                 <div>
