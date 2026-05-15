@@ -41,7 +41,7 @@ function SignupPage() {
         <div className="text-center">
           <Link to="/" className="inline-flex items-center gap-2 font-semibold">
             <div className="size-8 rounded-lg" style={{ background: "var(--gradient-primary)" }} />
-            Pixelboard
+            NiNi Digital Solutions
           </Link>
           <h1 className="mt-6 text-2xl font-semibold">Create your account</h1>
         </div>
