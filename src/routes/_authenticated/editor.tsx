@@ -389,6 +389,26 @@ function EditorPage() {
   const flipH = () => { if (a) update(() => a.set("flipX", !a.flipX)); };
   const flipV = () => { if (a) update(() => a.set("flipY", !a.flipY)); };
 
+  const fitImageToCanvas = () => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const current = fc.getActiveObject();
+    const target = (current instanceof fabric.FabricImage)
+      ? current
+      : (fc.getObjects().find((o) => o instanceof fabric.FabricImage) as Fabric.FabricImage | undefined);
+    if (!target) { toast.error("No image on the canvas to fit"); return; }
+    update(() => {
+      target.set({ angle: 0, flipX: false, flipY: false, skewX: 0, skewY: 0, originX: "left", originY: "top" });
+      const scale = Math.min(fc.width! / target.width!, fc.height! / target.height!);
+      target.scale(scale);
+      target.set({
+        left: (fc.width! - target.width! * scale) / 2,
+        top: (fc.height! - target.height! * scale) / 2,
+      });
+      target.setCoords();
+      fc.setActiveObject(target);
+    });
+  };
+
   if (!fabric) {
     return <div className="flex h-screen items-center justify-center bg-muted/30 text-muted-foreground">Loading editor…</div>;
   }
@@ -608,6 +628,11 @@ function EditorPage() {
               <Button variant="outline" size="sm" onClick={flipH}><FlipHorizontal className="size-4" /></Button>
               <Button variant="outline" size="sm" onClick={flipV}><FlipVertical className="size-4" /></Button>
             </div>
+            {isImage && (
+              <Button variant="outline" size="sm" className="w-full" onClick={fitImageToCanvas}>
+                <Maximize2 className="size-4 mr-2" /> Fit image to canvas
+              </Button>
+            )}
             <Separator />
 
             {isText && (
