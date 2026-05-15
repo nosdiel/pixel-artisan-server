@@ -37,9 +37,16 @@ const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b98
 type Asset = { id: string; title: string; url: string };
 type FabricModule = typeof import("fabric");
 
-export const Route = createFileRoute("/_authenticated/editor")({ component: EditorPage, ssr: false });
+export const Route = createFileRoute("/_authenticated/editor")({
+  component: EditorPage,
+  ssr: false,
+  validateSearch: (s: Record<string, unknown>) => ({
+    template: typeof s.template === "string" ? s.template : undefined,
+  }),
+});
 
 function EditorPage() {
+  const { template: templateIdParam } = Route.useSearch();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
   const historyRef = useRef<{ stack: string[]; index: number; suspend: boolean }>({ stack: [], index: -1, suspend: false });
@@ -53,6 +60,8 @@ function EditorPage() {
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
   const [saving, setSaving] = useState(false);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [templateId, setTemplateId] = useState<string | null>(templateIdParam ?? null);
+  const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -62,6 +71,30 @@ function EditorPage() {
     });
     return () => { mounted = false; };
   }, []);
+
+  // Load template metadata BEFORE canvas init so preset matches
+  useEffect(() => {
+    if (!templateIdParam) return;
+    (async () => {
+      const { data, error } = await supabase
+        .from("templates")
+        .select("id, name, preset, canvas_json")
+        .eq("id", templateIdParam)
+        .maybeSingle();
+      if (error || !data) {
+        toast.error("Could not load template");
+        return;
+      }
+      setTemplateId(data.id);
+      setTitle(data.name || "Untitled");
+      if (data.preset && PRESETS[data.preset]) setPreset(data.preset);
+      const cj = data.canvas_json as { background?: string } | null;
+      if (cj && typeof cj === "object" && typeof cj.background === "string") {
+        setBgColor(cj.background);
+      }
+      setPendingCanvasJson(data.canvas_json ?? null);
+    })();
+  }, [templateIdParam]);
 
   // Initialize canvas
   useEffect(() => {
@@ -85,6 +118,26 @@ function EditorPage() {
     return () => { fc.dispose(); fcRef.current = null; historyRef.current = { stack: [], index: -1, suspend: false }; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fabric, preset]);
+
+  // Hydrate canvas from saved template JSON once canvas exists
+  useEffect(() => {
+    const fc = fcRef.current;
+    if (!fc || !pendingCanvasJson) return;
+    historyRef.current.suspend = true;
+    (async () => {
+      try {
+        await fc.loadFromJSON(pendingCanvasJson as object);
+        fc.renderAll();
+      } finally {
+        historyRef.current.suspend = false;
+        historyRef.current = { stack: [], index: -1, suspend: false };
+        pushHistory();
+        setPendingCanvasJson(null);
+        refresh();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCanvasJson, fabric, preset]);
 
   // Apply zoom
   useEffect(() => {
@@ -215,6 +268,7 @@ function EditorPage() {
       fc.setZoom(1);
       fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
+      const canvasJson = fc.toJSON();
       fc.setZoom(prevZoom);
       fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
 
@@ -232,10 +286,39 @@ function EditorPage() {
         variantRecords.push({ format: v.format, path, size: v.size, quality: v.quality });
       }
       variantRecords.sort((x, y) => x.size - y.size);
+
+      // Persist editable template (insert or update)
+      let savedTemplateId = templateId;
+      const tplPayload = {
+        user_id: userId,
+        name: title,
+        preset,
+        width,
+        height,
+        canvas_json: JSON.parse(JSON.stringify(canvasJson)),
+      };
+      if (savedTemplateId) {
+        const { error: upErr } = await supabase
+          .from("templates")
+          .update({ ...tplPayload, updated_at: new Date().toISOString() })
+          .eq("id", savedTemplateId);
+        if (upErr) throw upErr;
+      } else {
+        const { data: tplRow, error: tplErr } = await supabase
+          .from("templates")
+          .insert(tplPayload)
+          .select("id")
+          .single();
+        if (tplErr) throw tplErr;
+        savedTemplateId = tplRow.id;
+        setTemplateId(savedTemplateId);
+      }
+
       const { error: insErr } = await supabase.from("images").insert({
         user_id: userId, slug, title, width, height,
         original_size_bytes: originalSize, optimized_size_bytes: best.size,
         variants: variantRecords, preset, source: "editor",
+        template_id: savedTemplateId,
       });
       if (insErr) throw insErr;
       toast.success(`Saved! Compressed ${Math.round((1 - best.size / originalSize) * 100)}%`);
