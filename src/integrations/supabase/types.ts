@@ -127,35 +127,41 @@ export type Database = {
       }
       square_connections: {
         Row: {
-          access_token: string
+          access_token: string | null
           auto_sync_enabled: boolean
           created_at: string
           environment: string
           last_sync_at: string | null
           location_id: string | null
           merchant_id: string | null
+          site_url: string | null
+          source: string
           updated_at: string
           user_id: string
         }
         Insert: {
-          access_token: string
+          access_token?: string | null
           auto_sync_enabled?: boolean
           created_at?: string
           environment?: string
           last_sync_at?: string | null
           location_id?: string | null
           merchant_id?: string | null
+          site_url?: string | null
+          source?: string
           updated_at?: string
           user_id: string
         }
         Update: {
-          access_token?: string
+          access_token?: string | null
           auto_sync_enabled?: boolean
           created_at?: string
           environment?: string
           last_sync_at?: string | null
           location_id?: string | null
           merchant_id?: string | null
+          site_url?: string | null
+          source?: string
           updated_at?: string
           user_id?: string
         }
