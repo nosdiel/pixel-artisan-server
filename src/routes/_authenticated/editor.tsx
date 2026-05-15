@@ -445,11 +445,11 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
-function ImageFilters({ image, onChange }: { image: fabric.FabricImage; onChange: () => void }) {
-  const getFilter = <T,>(Type: new (opts: any) => T): T | undefined => image.filters.find((f) => f instanceof (Type as any)) as T | undefined;
-  const setFilter = <T,>(Type: new (opts: any) => T, opts: any) => {
-    image.filters = image.filters.filter((f) => !(f instanceof (Type as any)));
-    image.filters.push(new Type(opts) as any);
+function ImageFilters({ fabric, image, onChange }: { fabric: FabricModule; image: Fabric.FabricImage; onChange: () => void }) {
+  const getFilter = (Type: any) => image.filters.find((f: unknown) => f instanceof Type) as any;
+  const setFilter = (Type: any, opts: Record<string, number>) => {
+    image.filters = image.filters.filter((f: unknown) => !(f instanceof Type));
+    image.filters.push(new Type(opts));
     image.applyFilters();
     onChange();
   };
