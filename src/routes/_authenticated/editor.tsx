@@ -287,7 +287,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const json = JSON.stringify(fc.toJSON(["imageStoragePath"]));
+    const json = JSON.stringify((fc as any).toJSON(["imageStoragePath"]));
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(json);
@@ -384,7 +384,7 @@ function EditorPage() {
       fc.setZoom(1);
       fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = fc.toJSON();
+      const canvasJson = (fc as any).toJSON(["imageStoragePath"]);
       fc.setZoom(prevZoom);
       fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
 
@@ -498,7 +498,7 @@ function EditorPage() {
               <div className="grid grid-cols-2 gap-2 px-1">
                 {assets.length === 0 && <p className="col-span-2 text-xs text-muted-foreground text-center py-6">No saved images yet</p>}
                 {assets.map((asset) => (
-                  <button key={asset.id} onClick={() => addImageFromUrl(asset.url)} className="group relative aspect-square rounded overflow-hidden border border-border hover:border-primary">
+                  <button key={asset.id} onClick={() => addImageFromUrl(asset.url, asset.path)} className="group relative aspect-square rounded overflow-hidden border border-border hover:border-primary">
                     <img src={asset.url} alt={asset.title} className="size-full object-cover" />
                   </button>
                 ))}
