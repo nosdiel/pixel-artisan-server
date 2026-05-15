@@ -395,6 +395,33 @@ function EditorPage() {
     (async () => {
       try {
         await fc.loadFromJSON(pendingCanvasJson as object);
+        // Rehydrate any video layers (loadFromJSON only restores them as still images)
+        if (fabric) {
+          for (const obj of fc.getObjects()) {
+            const vp = (obj as any).videoStoragePath as string | undefined;
+            const src = (obj as any).getSrc?.() as string | undefined;
+            if (!vp || !src || !(obj instanceof fabric.FabricImage)) continue;
+            try {
+              const video = document.createElement("video");
+              video.src = src;
+              video.crossOrigin = "anonymous";
+              video.muted = true;
+              video.loop = true;
+              video.playsInline = true;
+              video.autoplay = true;
+              await new Promise<void>((resolve, reject) => {
+                video.onloadeddata = () => resolve();
+                video.onerror = () => reject(new Error("video"));
+              });
+              video.width = video.videoWidth;
+              video.height = video.videoHeight;
+              (obj as any).setElement(video);
+              (obj as any).objectCaching = false;
+              try { await video.play(); } catch { /* blocked */ }
+              startVideoRaf(fc, video);
+            } catch { /* ignore */ }
+          }
+        }
         fc.renderAll();
       } finally {
         historyRef.current.suspend = false;
