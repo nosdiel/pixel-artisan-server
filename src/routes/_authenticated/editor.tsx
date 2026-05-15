@@ -298,7 +298,7 @@ function EditorPage() {
         preset,
         width,
         height,
-        canvas_json: canvasJson as object,
+        canvas_json: JSON.parse(JSON.stringify(canvasJson)),
       };
       if (savedTemplateId) {
         const { error: upErr } = await supabase
