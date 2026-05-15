@@ -51,6 +51,13 @@ function extractStoragePath(src: string) {
   }
 }
 
+function presetForImage(width: number, height: number) {
+  const exact = Object.entries(PRESETS).find(([, size]) => size.w === width && size.h === height)?.[0];
+  if (exact) return exact;
+  if (Math.abs(width - height) < Math.max(width, height) * 0.08) return "1080x1080";
+  return height > width ? "1080x1920" : "1920x1080";
+}
+
 export const Route = createFileRoute("/_authenticated/editor")({
   component: EditorPage,
   ssr: false,
@@ -113,11 +120,7 @@ function EditorPage() {
     }
     const image = data as GalleryImageRow;
     setTitle(image.title || "Untitled");
-    if (image.preset && PRESETS[image.preset]) setPreset(image.preset);
-    else {
-      const matchedPreset = Object.entries(PRESETS).find(([, size]) => size.w === image.width && size.h === image.height)?.[0];
-      if (matchedPreset) setPreset(matchedPreset);
-    }
+    setPreset(image.preset && PRESETS[image.preset] ? image.preset : presetForImage(image.width, image.height));
     const variant = image.variants?.[0];
     if (!variant?.path) {
       toast.error("This image has no stored file to reuse");
