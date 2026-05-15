@@ -2,7 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { syncUserCatalog, fetchSourcePage, recomputeStaleTemplates } from "./square-sync.server";
-import { fetchOnlineSiteCatalog } from "./square-online.server";
 
 export const syncSquareCatalog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -176,11 +175,15 @@ export const saveSquareConnection = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     if (data.source === "online_site") {
-      // Validate the URL up front so users get an immediate error instead of one at first sync.
+      // Lightweight reachability check only — many Square Online pages render
+      // products via JS, so JSON-LD may be absent in the initial HTML. The
+      // background sync job surfaces real fetch/parse errors later.
       try {
-        await fetchOnlineSiteCatalog(data.site_url);
+        const url = /^https?:\/\//i.test(data.site_url) ? data.site_url : `https://${data.site_url}`;
+        const res = await fetch(url, { method: "GET", redirect: "follow" });
+        if (!res.ok) throw new Error(`Site returned ${res.status}`);
       } catch (e) {
-        throw new Error(e instanceof Error ? e.message : String(e));
+        throw new Error(`Could not reach site: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     const row = (
