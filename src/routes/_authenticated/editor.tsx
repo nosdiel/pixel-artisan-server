@@ -51,6 +51,13 @@ function extractStoragePath(src: string) {
   }
 }
 
+function presetForImage(width: number, height: number) {
+  const exact = Object.entries(PRESETS).find(([, size]) => size.w === width && size.h === height)?.[0];
+  if (exact) return exact;
+  if (Math.abs(width - height) < Math.max(width, height) * 0.08) return "1080x1080";
+  return height > width ? "1080x1920" : "1920x1080";
+}
+
 export const Route = createFileRoute("/_authenticated/editor")({
   component: EditorPage,
   ssr: false,
@@ -63,6 +70,7 @@ export const Route = createFileRoute("/_authenticated/editor")({
 function EditorPage() {
   const { template: templateIdParam, image: imageIdParam } = Route.useSearch();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasHostRef = useRef<HTMLDivElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
   const historyRef = useRef<{ stack: string[]; index: number; suspend: boolean }>({ stack: [], index: -1, suspend: false });
   const [fabric, setFabric] = useState<FabricModule | null>(null);
@@ -79,6 +87,15 @@ function EditorPage() {
   const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
   const [pendingBaseImage, setPendingBaseImage] = useState<PendingBaseImage | null>(null);
   const navigate = useNavigate();
+
+  const getFitZoom = useCallback((presetKey = preset) => {
+    const host = canvasHostRef.current;
+    const { w, h } = PRESETS[presetKey];
+    if (!host) return Math.min(0.4, 720 / h, 900 / w);
+    const availableWidth = Math.max(host.clientWidth - 64, 320);
+    const availableHeight = Math.max(host.clientHeight - 64, 320);
+    return Math.max(0.1, Math.min(availableWidth / w, availableHeight / h, 1));
+  }, [preset]);
 
   const withFreshImageUrls = useCallback(async (canvasJson: unknown) => {
     const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
@@ -113,11 +130,7 @@ function EditorPage() {
     }
     const image = data as GalleryImageRow;
     setTitle(image.title || "Untitled");
-    if (image.preset && PRESETS[image.preset]) setPreset(image.preset);
-    else {
-      const matchedPreset = Object.entries(PRESETS).find(([, size]) => size.w === image.width && size.h === image.height)?.[0];
-      if (matchedPreset) setPreset(matchedPreset);
-    }
+    setPreset(image.preset && PRESETS[image.preset] ? image.preset : presetForImage(image.width, image.height));
     const variant = image.variants?.[0];
     if (!variant?.path) {
       toast.error("This image has no stored file to reuse");
@@ -181,8 +194,10 @@ function EditorPage() {
     const { w, h } = PRESETS[preset];
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
-    fc.setZoom(zoom);
-    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
+    const fittedZoom = getFitZoom(preset);
+    fc.setZoom(fittedZoom);
+    fc.setDimensions({ width: w * fittedZoom, height: h * fittedZoom }, { cssOnly: true });
+    setZoom(fittedZoom);
 
     const onSel = () => { setActive(fc.getActiveObject() ?? null); refresh(); };
     const onMod = () => { pushHistory(); refresh(); };
@@ -196,7 +211,7 @@ function EditorPage() {
     pushHistory();
     return () => { fc.dispose(); fcRef.current = null; historyRef.current = { stack: [], index: -1, suspend: false }; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fabric, preset]);
+  }, [fabric, preset, getFitZoom]);
 
   // Hydrate canvas from saved template JSON once canvas exists
   useEffect(() => {
@@ -228,7 +243,7 @@ function EditorPage() {
         fc.clear();
         fc.backgroundColor = bgColor;
         const img = await fabric.FabricImage.fromURL(pendingBaseImage.url, { crossOrigin: "anonymous" });
-        const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!, 1);
+        const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!);
         img.scale(scale);
         img.set({
           left: (fc.width! - img.width! * scale) / 2,
@@ -399,16 +414,6 @@ function EditorPage() {
       const { best, variants, originalSize, width, height } = await autoCompress(blob);
       const { data: ud } = await supabase.auth.getUser();
       const userId = ud.user!.id;
-      const slug = nanoid(10);
-      const baseFolder = `${userId}/${slug}`;
-      const variantRecords: { format: string; path: string; size: number; quality: number }[] = [];
-      for (const v of variants) {
-        const path = `${baseFolder}/image.${v.format === "jpeg" ? "jpg" : v.format}`;
-        const { error } = await supabase.storage.from("images").upload(path, v.blob, { contentType: v.blob.type, upsert: true });
-        if (error) throw error;
-        variantRecords.push({ format: v.format, path, size: v.size, quality: v.quality });
-      }
-      variantRecords.sort((x, y) => x.size - y.size);
 
       // Persist editable template (insert or update)
       let savedTemplateId = templateId;
@@ -437,12 +442,38 @@ function EditorPage() {
         setTemplateId(savedTemplateId);
       }
 
-      const { error: insErr } = await supabase.from("images").insert({
+      const { data: existingImage } = imageIdParam
+        ? await supabase.from("images").select("id, slug").eq("user_id", userId).eq("id", imageIdParam).maybeSingle()
+        : savedTemplateId
+          ? await supabase
+              .from("images")
+              .select("id, slug")
+              .eq("user_id", userId)
+              .eq("template_id", savedTemplateId)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle()
+          : { data: null };
+      const slug = existingImage?.slug ?? nanoid(10);
+      const baseFolder = `${userId}/${slug}`;
+      const variantRecords: { format: string; path: string; size: number; quality: number }[] = [];
+      for (const v of variants) {
+        const path = `${baseFolder}/image.${v.format === "jpeg" ? "jpg" : v.format}`;
+        const { error } = await supabase.storage.from("images").upload(path, v.blob, { contentType: v.blob.type, upsert: true });
+        if (error) throw error;
+        variantRecords.push({ format: v.format, path, size: v.size, quality: v.quality });
+      }
+      variantRecords.sort((x, y) => x.size - y.size);
+
+      const imagePayload = {
         user_id: userId, slug, title, width, height,
         original_size_bytes: originalSize, optimized_size_bytes: best.size,
         variants: variantRecords, preset, source: "editor",
         template_id: savedTemplateId,
-      });
+      };
+      const { error: insErr } = existingImage
+        ? await supabase.from("images").update(imagePayload).eq("id", existingImage.id)
+        : await supabase.from("images").insert(imagePayload);
       if (insErr) throw insErr;
       toast.success(`Saved! Compressed ${Math.round((1 - best.size / originalSize) * 100)}%`);
       navigate({ to: "/dashboard" });
@@ -548,13 +579,13 @@ function EditorPage() {
           <Button variant="ghost" size="sm" onClick={() => setZoom((z) => Math.max(0.1, z - 0.1))}><ZoomOut className="size-4" /></Button>
           <span className="text-xs w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
           <Button variant="ghost" size="sm" onClick={() => setZoom((z) => Math.min(2, z + 0.1))}><ZoomIn className="size-4" /></Button>
-          <Button variant="ghost" size="sm" onClick={() => setZoom(0.4)}><Maximize2 className="size-4" /></Button>
+          <Button variant="ghost" size="sm" onClick={() => setZoom(getFitZoom())}><Maximize2 className="size-4" /></Button>
           <div className="flex-1" />
           <Button onClick={onSave} disabled={saving}>
             <Save className="size-4 mr-1.5" /> {saving ? "Saving…" : "Save"}
           </Button>
         </div>
-        <div className="flex-1 overflow-auto flex items-center justify-center p-8">
+        <div ref={canvasHostRef} className="flex-1 overflow-auto flex items-start justify-center p-8">
           <div className="bg-white shadow-[var(--shadow-elegant)] inline-block">
             <canvas ref={canvasRef} />
           </div>
