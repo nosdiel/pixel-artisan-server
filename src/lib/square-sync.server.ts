@@ -158,28 +158,8 @@ export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
     .update({ last_sync_at: new Date().toISOString() })
     .eq("user_id", userId);
 
-  const { data: templates } = await supabaseAdmin
-    .from("templates")
-    .select("id, square_bindings, last_price_snapshot, is_stale")
-    .eq("user_id", userId);
-
-  let staleCount = 0;
-  for (const t of templates ?? []) {
-    const bindings = (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
-    if (!bindings.length) continue;
-    const snapshot = (t.last_price_snapshot as Record<string, number | null> | null) ?? {};
-    let stale = false;
-    for (const b of bindings) {
-      const current = priceMap[b.square_item_id] ?? null;
-      if (snapshot[b.square_item_id] !== current) stale = true;
-    }
-    if (stale && !t.is_stale) {
-      staleCount++;
-      await supabaseAdmin.from("templates").update({ is_stale: true }).eq("id", t.id);
-    }
-  }
-
-  return { itemCount: flat.length, staleCount };
+  const { staleCount, updatedCount } = await recomputeStaleTemplates(userId);
+  return { itemCount: flat.length, staleCount, updatedCount };
 }
 
 /** Compare each template's last price snapshot against current cache and flip is_stale on changes. */
