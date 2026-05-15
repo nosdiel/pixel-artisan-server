@@ -36,7 +36,7 @@ const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b98
 
 type Asset = { id: string; title: string; url: string };
 
-export const Route = createFileRoute("/_authenticated/editor")({ component: EditorPage });
+export const Route = createFileRoute("/_authenticated/editor")({ component: EditorPage, ssr: false });
 
 function EditorPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -118,7 +118,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const json = JSON.stringify(fc.toJSON(["selectable", "evented"]));
+    const json = JSON.stringify(fc.toJSON());
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(json);
@@ -435,7 +435,7 @@ function ImageFilters({ image, onChange }: { image: fabric.FabricImage; onChange
   const getFilter = <T,>(Type: new (opts: any) => T): T | undefined => image.filters.find((f) => f instanceof (Type as any)) as T | undefined;
   const setFilter = <T,>(Type: new (opts: any) => T, opts: any) => {
     image.filters = image.filters.filter((f) => !(f instanceof (Type as any)));
-    image.filters.push(new Type(opts));
+    image.filters.push(new Type(opts) as any);
     image.applyFilters();
     onChange();
   };
