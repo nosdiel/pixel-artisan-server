@@ -7,7 +7,7 @@ export const Route = createFileRoute("/")({
   component: Index,
   head: () => ({
     meta: [
-      { title: "Pixelboard — Image compression & editor for digital signage" },
+      { title: "NiNi Digital Solutions — Image compression & editor for digital signage" },
       { name: "description", content: "Compress, edit, and auto-update digital signage images. Built-in editor, public API, and Square menu price sync." },
     ],
   }),
@@ -20,7 +20,7 @@ function Index() {
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <Link to="/" className="flex items-center gap-2 font-semibold">
             <div className="size-8 rounded-lg" style={{ background: "var(--gradient-primary)" }} />
-            <span>Pixelboard</span>
+            <span>NiNi Digital Solutions</span>
           </Link>
           <nav className="flex items-center gap-2">
             <Link to="/login"><Button variant="ghost" size="sm">Sign in</Button></Link>
@@ -70,7 +70,7 @@ function Index() {
       </section>
 
       <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground">
-        © 2026 Pixelboard
+        © 2026 NiNi Digital Solutions
       </footer>
     </div>
   );

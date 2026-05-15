@@ -37,7 +37,7 @@ function AuthLayout() {
       <aside className="w-60 shrink-0 bg-sidebar text-sidebar-foreground flex flex-col">
         <Link to="/dashboard" className="flex items-center gap-2 px-5 h-16 font-semibold border-b border-sidebar-border">
           <div className="size-7 rounded-lg" style={{ background: "var(--gradient-primary)" }} />
-          Pixelboard
+          NiNi Digital Solutions
         </Link>
         <nav className="flex-1 p-3 space-y-1">
           {nav.map((n) => {
