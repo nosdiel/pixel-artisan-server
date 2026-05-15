@@ -231,7 +231,7 @@ function EditorPage() {
         fc.clear();
         fc.backgroundColor = bgColor;
         const img = await fabric.FabricImage.fromURL(pendingBaseImage.url, { crossOrigin: "anonymous" });
-        const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!, 1);
+        const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!);
         img.scale(scale);
         img.set({
           left: (fc.width! - img.width! * scale) / 2,
