@@ -112,7 +112,6 @@ async function fetchSquareOnlineApiItems(siteUrl: URL, bootstrap: BootstrapState
   if (!ownerId || !siteId) return [];
 
   const locationId = siteUrl.searchParams.get("location");
-  const selectedCategoryId = getSelectedCategoryId(siteUrl, bootstrap);
   const apiBase = new URL(
     `/app/store/api/v28/editor/users/${encodeURIComponent(ownerId)}/sites/${encodeURIComponent(siteId)}`,
     "https://cdn5.editmysite.com",
@@ -129,7 +128,6 @@ async function fetchSquareOnlineApiItems(siteUrl: URL, bootstrap: BootstrapState
     pageUrl.searchParams.set("per_page", "100");
     pageUrl.searchParams.set("lang", "en");
     pageUrl.searchParams.append("visibilities[]", "visible");
-    if (selectedCategoryId) pageUrl.searchParams.append("categories[]", selectedCategoryId);
     if (typeof cacheVersion === "string") pageUrl.searchParams.set("cache-version", cacheVersion);
 
     const res = await fetch(pageUrl, {
@@ -150,14 +148,6 @@ async function fetchSquareOnlineApiItems(siteUrl: URL, bootstrap: BootstrapState
   const categories = bootstrap.commerceLinks?.categories ?? {};
   const currency = bootstrap.storeInfo?.currency ?? "USD";
   return dedupe(products.map((product) => onlineProductToFlat(product, categories, currency)));
-}
-
-function getSelectedCategoryId(siteUrl: URL, bootstrap: BootstrapState): string | null {
-  const fromHash = siteUrl.hash.match(/[A-Z0-9]{20,}/)?.[0];
-  if (fromHash && bootstrap.commerceLinks?.categories?.[fromHash]) return fromHash;
-  const pathMatch = siteUrl.pathname.match(/\/shop\/[^/]+\/([A-Z0-9]{20,})/i)?.[1];
-  if (pathMatch && bootstrap.commerceLinks?.categories?.[pathMatch]) return pathMatch;
-  return null;
 }
 
 function onlineProductToFlat(product: OnlineProduct, categories: NonNullable<BootstrapState["commerceLinks"]>["categories"], currency: string): FlatItem {
