@@ -579,13 +579,13 @@ function EditorPage() {
           <Button variant="ghost" size="sm" onClick={() => setZoom((z) => Math.max(0.1, z - 0.1))}><ZoomOut className="size-4" /></Button>
           <span className="text-xs w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
           <Button variant="ghost" size="sm" onClick={() => setZoom((z) => Math.min(2, z + 0.1))}><ZoomIn className="size-4" /></Button>
-          <Button variant="ghost" size="sm" onClick={() => setZoom(0.4)}><Maximize2 className="size-4" /></Button>
+          <Button variant="ghost" size="sm" onClick={() => setZoom(getFitZoom())}><Maximize2 className="size-4" /></Button>
           <div className="flex-1" />
           <Button onClick={onSave} disabled={saving}>
             <Save className="size-4 mr-1.5" /> {saving ? "Saving…" : "Save"}
           </Button>
         </div>
-        <div className="flex-1 overflow-auto flex items-center justify-center p-8">
+        <div ref={canvasHostRef} className="flex-1 overflow-auto flex items-start justify-center p-8">
           <div className="bg-white shadow-[var(--shadow-elegant)] inline-block">
             <canvas ref={canvasRef} />
           </div>
