@@ -86,6 +86,9 @@ function EditorPage() {
   const [templateId, setTemplateId] = useState<string | null>(templateIdParam ?? null);
   const [pendingCanvasJson, setPendingCanvasJson] = useState<unknown | null>(null);
   const [pendingBaseImage, setPendingBaseImage] = useState<PendingBaseImage | null>(null);
+  const [customFonts, setCustomFonts] = useState<string[]>([]);
+  const [uploadingFont, setUploadingFont] = useState(false);
+  const fontInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   const getFitZoom = useCallback((presetKey = preset) => {
