@@ -69,7 +69,7 @@ export const stepSquareSyncJob = createServerFn({ method: "POST" })
 
     try {
       const { items, cursor } = await fetchCatalogPage(conn.access_token, conn.environment, job.cursor ?? undefined);
-      const flat = items.map(flattenItem).map((f) => ({ ...f, user_id: userId }));
+      const flat = items.map((it) => ({ ...flattenItem(it), user_id: userId }));
       if (flat.length) {
         const { error: insErr } = await supabase.from("square_items_cache").insert(flat);
         if (insErr) throw new Error(insErr.message);
