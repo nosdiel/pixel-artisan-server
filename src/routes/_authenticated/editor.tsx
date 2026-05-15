@@ -36,6 +36,7 @@ const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b98
 
 type Asset = { id: string; title: string; url: string; path: string };
 type PendingBaseImage = { url: string; path: string };
+type GalleryImageRow = { id: string; title: string; preset: string | null; width: number; height: number; variants: Array<{ path: string; format: string }> | null };
 type FabricModule = typeof import("fabric");
 
 function extractStoragePath(src: string) {
@@ -98,6 +99,38 @@ function EditorPage() {
     await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
     if (json.backgroundImage) await refreshObject(json.backgroundImage);
     return json;
+  }, []);
+
+  const loadGalleryImageAsTemplate = useCallback(async (imageId: string) => {
+    const { data, error } = await supabase
+      .from("images")
+      .select("id, title, preset, width, height, variants")
+      .eq("id", imageId)
+      .maybeSingle();
+    if (error || !data) {
+      toast.error("Could not load image");
+      return;
+    }
+    const image = data as GalleryImageRow;
+    setTitle(image.title || "Untitled");
+    if (image.preset && PRESETS[image.preset]) setPreset(image.preset);
+    else {
+      const matchedPreset = Object.entries(PRESETS).find(([, size]) => size.w === image.width && size.h === image.height)?.[0];
+      if (matchedPreset) setPreset(matchedPreset);
+    }
+    const variant = image.variants?.[0];
+    if (!variant?.path) {
+      toast.error("This image has no stored file to reuse");
+      return;
+    }
+    const { data: signed, error: signError } = await supabase.storage.from("images").createSignedUrl(variant.path, 3600);
+    if (signError || !signed?.signedUrl) {
+      toast.error("Could not prepare image for editing");
+      return;
+    }
+    setTemplateId(null);
+    setPendingCanvasJson(null);
+    setPendingBaseImage({ url: signed.signedUrl, path: variant.path });
   }, []);
 
   useEffect(() => {
