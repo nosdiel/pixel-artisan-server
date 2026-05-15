@@ -154,7 +154,8 @@ function EditorPage() {
       if (videoPath) {
         const { data } = await supabase.storage.from("images").createSignedUrl(videoPath, 3600);
         if (data?.signedUrl) {
-          obj.src = data.signedUrl;
+          obj.videoSrc = data.signedUrl;
+          obj.src = TRANSPARENT_VIDEO_PLACEHOLDER;
           obj.crossOrigin = "anonymous";
           obj.videoStoragePath = videoPath;
         }
@@ -433,7 +434,7 @@ function EditorPage() {
         if (fabric) {
           for (const obj of fc.getObjects()) {
             const vp = (obj as any).videoStoragePath as string | undefined;
-            const src = (obj as any).getSrc?.() as string | undefined;
+            const src = ((obj as any).videoSrc || (obj as any).getSrc?.()) as string | undefined;
             if (!vp || !src || !(obj instanceof fabric.FabricImage)) continue;
             try {
               const video = document.createElement("video");
