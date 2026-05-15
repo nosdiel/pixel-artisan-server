@@ -96,6 +96,17 @@ function patchSerializedMedia(serializedObjects: any[] | undefined, liveObjects:
   });
 }
 
+function collectSerializedVideoSources(objects: any[] | undefined, out: Array<{ path: string; src?: string }> = []) {
+  if (!Array.isArray(objects)) return out;
+  for (const obj of objects) {
+    if (!obj || typeof obj !== "object") continue;
+    const path = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : null;
+    if (path) out.push({ path, src: typeof obj.videoSrc === "string" ? obj.videoSrc : undefined });
+    collectSerializedVideoSources(obj.objects ?? obj._objects, out);
+  }
+  return out;
+}
+
 function presetForImage(width: number, height: number) {
   const exact = Object.entries(PRESETS).find(([, size]) => size.w === width && size.h === height)?.[0];
   if (exact) return exact;
