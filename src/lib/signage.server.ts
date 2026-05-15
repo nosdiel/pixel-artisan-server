@@ -1,0 +1,157 @@
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
+
+export type RendererSettings = {
+  user_id: string;
+  company_id: string | null;
+  renderer_url: string | null;
+  renderer_auth_token: string | null;
+  auto_publish_enabled: boolean;
+};
+
+export type RendererResponse = {
+  success: boolean;
+  downloadUrl?: string;
+  error?: string;
+};
+
+/**
+ * POST a template payload to the user's external renderer service.
+ * The renderer is responsible for:
+ *  - rendering the canvas to PNG
+ *  - uploading to Firebase Storage at rendered/{companyId}/{templateId}/latest.png
+ *  - writing/updating the Firestore doc with downloadUrl + status
+ *  - returning { success, downloadUrl }
+ */
+export async function callRenderer(args: {
+  rendererUrl: string;
+  rendererAuthToken: string | null;
+  payload: {
+    templateId: string;
+    companyId: string;
+    name: string;
+    width: number;
+    height: number;
+    canvasJson: unknown;
+    squareData: Array<{ square_item_id: string; name: string | null; price_cents: number | null; currency: string | null }>;
+  };
+}): Promise<RendererResponse> {
+  const url = args.rendererUrl.replace(/\/+$/, "") + "/render";
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (args.rendererAuthToken) headers["Authorization"] = `Bearer ${args.rendererAuthToken}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(args.payload),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Renderer responded ${res.status}: ${text.slice(0, 300)}`);
+  }
+  try {
+    return JSON.parse(text) as RendererResponse;
+  } catch {
+    throw new Error(`Renderer returned non-JSON response: ${text.slice(0, 200)}`);
+  }
+}
+
+/**
+ * Render & publish a single template via the user's renderer.
+ * Updates `templates.last_published_*` columns with the result.
+ */
+export async function publishTemplateToRenderer(userId: string, templateId: string) {
+  const { data: settings } = await supabaseAdmin
+    .from("signage_settings")
+    .select("company_id, renderer_url, renderer_auth_token")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!settings?.renderer_url) throw new Error("Renderer URL is not configured. Add it in Settings → Signage publishing.");
+  if (!settings.company_id) throw new Error("Company ID is not configured. Add it in Settings → Signage publishing.");
+
+  const { data: tpl, error: tplErr } = await supabaseAdmin
+    .from("templates")
+    .select("id, name, width, height, canvas_json, square_bindings")
+    .eq("id", templateId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (tplErr) throw new Error(tplErr.message);
+  if (!tpl) throw new Error("Template not found");
+
+  const bindings = (tpl.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
+  const ids = bindings.map((b) => b.square_item_id);
+  let squareData: Array<{ square_item_id: string; name: string | null; price_cents: number | null; currency: string | null }> = [];
+  if (ids.length) {
+    const { data: items } = await supabaseAdmin
+      .from("square_items_cache")
+      .select("square_item_id, name, price_cents, currency")
+      .eq("user_id", userId)
+      .in("square_item_id", ids);
+    squareData = items ?? [];
+  }
+
+  try {
+    const result = await callRenderer({
+      rendererUrl: settings.renderer_url,
+      rendererAuthToken: settings.renderer_auth_token,
+      payload: {
+        templateId: tpl.id,
+        companyId: settings.company_id,
+        name: tpl.name,
+        width: tpl.width,
+        height: tpl.height,
+        canvasJson: tpl.canvas_json,
+        squareData,
+      },
+    });
+
+    if (!result.success) throw new Error(result.error || "Renderer returned success=false");
+
+    await supabaseAdmin
+      .from("templates")
+      .update({
+        last_published_at: new Date().toISOString(),
+        last_published_url: result.downloadUrl ?? null,
+        last_publish_status: "success",
+        last_publish_error: null,
+      })
+      .eq("id", tpl.id);
+
+    return { ok: true as const, downloadUrl: result.downloadUrl ?? null };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await supabaseAdmin
+      .from("templates")
+      .update({
+        last_published_at: new Date().toISOString(),
+        last_publish_status: "error",
+        last_publish_error: message.slice(0, 1000),
+      })
+      .eq("id", tpl.id);
+    throw new Error(message);
+  }
+}
+
+/** Auto-publish every template flagged stale or just auto-updated for this user, if enabled. */
+export async function autoPublishStaleTemplates(userId: string, candidateTemplateIds: string[]) {
+  if (!candidateTemplateIds.length) return { published: 0, errors: [] as string[] };
+  const { data: settings } = await supabaseAdmin
+    .from("signage_settings")
+    .select("auto_publish_enabled, renderer_url, company_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!settings?.auto_publish_enabled) return { published: 0, errors: [] };
+  if (!settings.renderer_url || !settings.company_id) return { published: 0, errors: ["renderer not configured"] };
+
+  let published = 0;
+  const errors: string[] = [];
+  for (const id of candidateTemplateIds) {
+    try {
+      await publishTemplateToRenderer(userId, id);
+      published++;
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  return { published, errors };
+}
