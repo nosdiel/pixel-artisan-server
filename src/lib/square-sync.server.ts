@@ -71,16 +71,37 @@ export async function fetchAllCatalog(token: string, env: string) {
 }
 
 export function flattenItem(item: SquareItem) {
-  const v = item.item_data?.variations?.[0]?.item_variation_data;
-  return {
-    square_item_id: item.id,
-    name: item.item_data?.name ?? null,
-    description: item.item_data?.description ?? null,
-    category: item.item_data?.category_id ?? null,
-    price_cents: v?.price_money?.amount ?? null,
-    currency: v?.price_money?.currency ?? "USD",
-    raw: item as unknown as Json,
-  };
+  const variations = item.item_data?.variations ?? [];
+  const baseName = item.item_data?.name ?? null;
+  const description = item.item_data?.description ?? null;
+  const category = item.item_data?.category_id ?? null;
+  // 0 or 1 variation: keep one row keyed by item id (preserves existing bindings).
+  if (variations.length <= 1) {
+    const v = variations[0]?.item_variation_data;
+    return [{
+      square_item_id: item.id,
+      name: baseName,
+      description,
+      category,
+      price_cents: v?.price_money?.amount ?? null,
+      currency: v?.price_money?.currency ?? "USD",
+      raw: item as unknown as Json,
+    }];
+  }
+  // Multiple variations: emit one row per variation with synthetic id `${itemId}:${variationId}`.
+  return variations.map((variation) => {
+    const v = variation.item_variation_data;
+    const variationName = v?.name?.trim() || "Default";
+    return {
+      square_item_id: `${item.id}:${variation.id}`,
+      name: baseName ? `${baseName} — ${variationName}` : variationName,
+      description,
+      category,
+      price_cents: v?.price_money?.amount ?? null,
+      currency: v?.price_money?.currency ?? "USD",
+      raw: { ...(item as unknown as Record<string, unknown>), _variation_id: variation.id } as unknown as Json,
+    };
+  });
 }
 
 function uniqueBySquareItemId<T extends { square_item_id: string }>(rows: T[]) {
@@ -95,21 +116,23 @@ export type ConnectionSource = {
 };
 
 /** Resolve a single page of items for either source. Online-site source returns everything in one page. */
-export async function fetchSourcePage(conn: ConnectionSource, cursor?: string) {
+type FlatRow = ReturnType<typeof flattenItem>[number];
+
+export async function fetchSourcePage(conn: ConnectionSource, cursor?: string): Promise<{ items: FlatRow[]; cursor: string | undefined }> {
   if (conn.source === "online_site") {
     if (!conn.site_url) throw new Error("Square Online site URL is not set");
-    if (cursor) return { items: [] as ReturnType<typeof flattenItem>[], cursor: undefined };
+    if (cursor) return { items: [], cursor: undefined };
     const items = await fetchOnlineSiteCatalog(conn.site_url);
     return { items, cursor: undefined };
   }
   if (!conn.access_token) throw new Error("Square access token is not set");
   const page = await fetchCatalogPage(conn.access_token, conn.environment, cursor);
-  return { items: page.items.map(flattenItem), cursor: page.cursor };
+  return { items: page.items.flatMap(flattenItem), cursor: page.cursor };
 }
 
 /** Run sync + stale detection for a single user, using the admin client. */
 export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
-  const collected: ReturnType<typeof flattenItem>[] = [];
+  const collected: FlatRow[] = [];
   let cursor: string | undefined;
   do {
     const page = await fetchSourcePage(conn, cursor);
