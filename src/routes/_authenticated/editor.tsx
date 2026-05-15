@@ -402,7 +402,17 @@ function EditorPage() {
       const { best, variants, originalSize, width, height } = await autoCompress(blob);
       const { data: ud } = await supabase.auth.getUser();
       const userId = ud.user!.id;
-      const slug = nanoid(10);
+      const { data: existingImage } = savedTemplateId
+        ? await supabase
+            .from("images")
+            .select("id, slug")
+            .eq("user_id", userId)
+            .eq("template_id", savedTemplateId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : { data: null };
+      const slug = existingImage?.slug ?? nanoid(10);
       const baseFolder = `${userId}/${slug}`;
       const variantRecords: { format: string; path: string; size: number; quality: number }[] = [];
       for (const v of variants) {
@@ -440,12 +450,15 @@ function EditorPage() {
         setTemplateId(savedTemplateId);
       }
 
-      const { error: insErr } = await supabase.from("images").insert({
+      const imagePayload = {
         user_id: userId, slug, title, width, height,
         original_size_bytes: originalSize, optimized_size_bytes: best.size,
         variants: variantRecords, preset, source: "editor",
         template_id: savedTemplateId,
-      });
+      };
+      const { error: insErr } = existingImage
+        ? await supabase.from("images").update(imagePayload).eq("id", existingImage.id)
+        : await supabase.from("images").insert(imagePayload);
       if (insErr) throw insErr;
       toast.success(`Saved! Compressed ${Math.round((1 - best.size / originalSize) * 100)}%`);
       navigate({ to: "/dashboard" });
