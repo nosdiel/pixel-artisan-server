@@ -151,7 +151,11 @@ function EditorPage() {
         .eq("id", templateIdParam)
         .maybeSingle();
       if (error || !data) {
-        toast.error("Could not load template");
+        if (imageIdParam) {
+          await loadGalleryImageAsTemplate(imageIdParam);
+        } else {
+          toast.error("Could not load template");
+        }
         return;
       }
       setTemplateId(data.id);
@@ -163,43 +167,13 @@ function EditorPage() {
       }
       setPendingCanvasJson(data.canvas_json ? await withFreshImageUrls(data.canvas_json) : null);
     })();
-  }, [templateIdParam, withFreshImageUrls]);
+  }, [templateIdParam, imageIdParam, loadGalleryImageAsTemplate, withFreshImageUrls]);
 
   // Fall back to the rendered gallery image when the row has no editable template yet
   useEffect(() => {
     if (!imageIdParam || templateIdParam) return;
-    (async () => {
-      const { data, error } = await supabase
-        .from("images")
-        .select("id, title, preset, width, height, variants")
-        .eq("id", imageIdParam)
-        .maybeSingle();
-      if (error || !data) {
-        toast.error("Could not load image");
-        return;
-      }
-      setTitle(data.title || "Untitled");
-      if (data.preset && PRESETS[data.preset]) setPreset(data.preset);
-      else {
-        const matchedPreset = Object.entries(PRESETS).find(([, size]) => size.w === data.width && size.h === data.height)?.[0];
-        if (matchedPreset) setPreset(matchedPreset);
-      }
-      const variants = (data.variants as Array<{ path: string; format: string }> | null) ?? [];
-      const variant = variants[0];
-      if (!variant?.path) {
-        toast.error("This image has no stored file to reuse");
-        return;
-      }
-      const { data: signed, error: signError } = await supabase.storage.from("images").createSignedUrl(variant.path, 3600);
-      if (signError || !signed?.signedUrl) {
-        toast.error("Could not prepare image for editing");
-        return;
-      }
-      setTemplateId(null);
-      setPendingCanvasJson(null);
-      setPendingBaseImage({ url: signed.signedUrl, path: variant.path });
-    })();
-  }, [imageIdParam, templateIdParam]);
+    void loadGalleryImageAsTemplate(imageIdParam);
+  }, [imageIdParam, templateIdParam, loadGalleryImageAsTemplate]);
 
   // Initialize canvas
   useEffect(() => {
