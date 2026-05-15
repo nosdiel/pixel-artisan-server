@@ -128,9 +128,9 @@ function EditorPage() {
       if (cj && typeof cj === "object" && typeof cj.background === "string") {
         setBgColor(cj.background);
       }
-      setPendingCanvasJson(data.canvas_json ?? null);
+      setPendingCanvasJson(data.canvas_json ? await withFreshImageUrls(data.canvas_json) : null);
     })();
-  }, [templateIdParam]);
+  }, [templateIdParam, withFreshImageUrls]);
 
   // Fall back to the rendered gallery image when the row has no editable template yet
   useEffect(() => {
@@ -287,7 +287,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const json = JSON.stringify(fc.toJSON());
+    const json = JSON.stringify(fc.toJSON(["imageStoragePath"]));
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.index + 1);
     h.stack.push(json);
@@ -310,19 +310,29 @@ function EditorPage() {
   };
 
   // Add helpers
-  const addImageFromUrl = async (url: string) => {
+  const addImageFromUrl = async (url: string, path?: string) => {
     const fc = fcRef.current; if (!fc || !fabric) return;
     const img = await fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
     const scale = Math.min(max / img.width!, max / img.height!, 1);
     img.scale(scale);
     img.set({ left: (fc.width! - img.width! * scale) / 2, top: (fc.height! - img.height! * scale) / 2 });
+    if (path) img.set("imageStoragePath", path);
     fc.add(img); fc.setActiveObject(img); fc.renderAll();
   };
   const onUploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
-    const url = URL.createObjectURL(file);
-    await addImageFromUrl(url);
+    const { data: ud } = await supabase.auth.getUser();
+    if (!ud.user) return;
+    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+    const path = `${ud.user.id}/editor-assets/${nanoid(10)}.${ext}`;
+    const { error } = await supabase.storage.from("images").upload(path, file, { contentType: file.type, upsert: true });
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    const { data: signed } = await supabase.storage.from("images").createSignedUrl(path, 3600);
+    await addImageFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
     e.target.value = "";
   };
   const addText = () => {
