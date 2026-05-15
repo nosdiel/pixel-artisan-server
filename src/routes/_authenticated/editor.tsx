@@ -36,7 +36,7 @@ const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b98
 
 type Asset = { id: string; title: string; url: string };
 
-export const Route = createFileRoute("/_authenticated/editor")({ component: EditorPage });
+export const Route = createFileRoute("/_authenticated/editor")({ component: EditorPage, ssr: false });
 
 function EditorPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
