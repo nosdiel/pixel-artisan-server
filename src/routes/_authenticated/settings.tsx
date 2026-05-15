@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/settings")({ component: SettingsPage });
@@ -13,11 +14,21 @@ function SettingsPage() {
   const [env, setEnv] = useState("production");
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [autoSync, setAutoSync] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("square_connections").select("merchant_id, environment").maybeSingle();
-      if (data) { setConnected(true); setEnv(data.environment); }
+      const { data } = await supabase
+        .from("square_connections")
+        .select("merchant_id, environment, auto_sync_enabled, last_sync_at")
+        .maybeSingle();
+      if (data) {
+        setConnected(true);
+        setEnv(data.environment);
+        setAutoSync(!!data.auto_sync_enabled);
+        setLastSync(data.last_sync_at);
+      }
     })();
   }, []);
 
@@ -31,6 +42,21 @@ function SettingsPage() {
     if (error) return toast.error(error.message);
     toast.success("Square connected");
     setConnected(true); setToken("");
+  };
+
+  const toggleAuto = async (next: boolean) => {
+    setAutoSync(next);
+    const { data: u } = await supabase.auth.getUser();
+    const { error } = await supabase
+      .from("square_connections")
+      .update({ auto_sync_enabled: next })
+      .eq("user_id", u.user!.id);
+    if (error) {
+      setAutoSync(!next);
+      toast.error(error.message);
+    } else {
+      toast.success(next ? "Auto-sync enabled (runs hourly)" : "Auto-sync disabled");
+    }
   };
 
   return (
@@ -48,6 +74,16 @@ function SettingsPage() {
           <div><Label>Access Token</Label><Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="EAAAlxxxxxxx" className="mt-1" /></div>
           <Button onClick={save} disabled={!token || loading}>{loading ? "Saving…" : "Save"}</Button>
         </div>
+        {connected && (
+          <div className="mt-6 pt-6 border-t border-border flex items-start justify-between gap-4">
+            <div>
+              <Label className="text-base">Automatic catalog sync</Label>
+              <p className="text-sm text-muted-foreground mt-1">Refresh Square prices every hour and flag stale templates automatically.</p>
+              {lastSync && <p className="text-xs text-muted-foreground mt-1">Last sync: {new Date(lastSync).toLocaleString()}</p>}
+            </div>
+            <Switch checked={autoSync} onCheckedChange={toggleAuto} />
+          </div>
+        )}
       </div>
       <p className="text-xs text-muted-foreground mt-4">API keys for the public signage API will be available here in the next iteration.</p>
     </div>

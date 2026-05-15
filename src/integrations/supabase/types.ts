@@ -128,6 +128,7 @@ export type Database = {
       square_connections: {
         Row: {
           access_token: string
+          auto_sync_enabled: boolean
           created_at: string
           environment: string
           last_sync_at: string | null
@@ -138,6 +139,7 @@ export type Database = {
         }
         Insert: {
           access_token: string
+          auto_sync_enabled?: boolean
           created_at?: string
           environment?: string
           last_sync_at?: string | null
@@ -148,6 +150,7 @@ export type Database = {
         }
         Update: {
           access_token?: string
+          auto_sync_enabled?: boolean
           created_at?: string
           environment?: string
           last_sync_at?: string | null
