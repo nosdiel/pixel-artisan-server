@@ -198,6 +198,10 @@ function EditorPage() {
   const flipH = () => { if (a) update(() => a.set("flipX", !a.flipX)); };
   const flipV = () => { if (a) update(() => a.set("flipY", !a.flipY)); };
 
+  if (!fabric) {
+    return <div className="flex h-screen items-center justify-center bg-muted/30 text-muted-foreground">Loading editor…</div>;
+  }
+
   const isText = !!fabric && (a instanceof fabric.IText || a instanceof fabric.Textbox);
   const isImage = !!fabric && a instanceof fabric.FabricImage;
   const objects = fcRef.current?.getObjects() ?? [];
@@ -373,21 +377,21 @@ function EditorPage() {
               <>
                 <div>
                   <Label className="text-xs">Font</Label>
-                  <Select value={(a as fabric.IText).fontFamily as string} onValueChange={(v) => update(() => (a as fabric.IText).set("fontFamily", v))}>
+                  <Select value={(a as Fabric.IText).fontFamily as string} onValueChange={(v) => update(() => (a as Fabric.IText).set("fontFamily", v))}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>{FONTS.map((f) => <SelectItem key={f} value={f} style={{ fontFamily: f }}>{f}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-xs">Size ({(a as fabric.IText).fontSize})</Label>
-                  <Slider min={8} max={400} step={1} value={[(a as fabric.IText).fontSize as number]} onValueChange={(v) => update(() => (a as fabric.IText).set("fontSize", v[0]))} className="mt-2" />
+                  <Label className="text-xs">Size ({(a as Fabric.IText).fontSize})</Label>
+                  <Slider min={8} max={400} step={1} value={[(a as Fabric.IText).fontSize as number]} onValueChange={(v) => update(() => (a as Fabric.IText).set("fontSize", v[0]))} className="mt-2" />
                 </div>
                 <div className="flex gap-1">
-                  <Button variant={(a as fabric.IText).fontWeight === "bold" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("fontWeight", (a as fabric.IText).fontWeight === "bold" ? "normal" : "bold"))}><Bold className="size-4" /></Button>
-                  <Button variant={(a as fabric.IText).fontStyle === "italic" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("fontStyle", (a as fabric.IText).fontStyle === "italic" ? "normal" : "italic"))}><Italic className="size-4" /></Button>
-                  <Button variant={(a as fabric.IText).underline ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("underline", !(a as fabric.IText).underline))}><Underline className="size-4" /></Button>
+                  <Button variant={(a as Fabric.IText).fontWeight === "bold" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as Fabric.IText).set("fontWeight", (a as Fabric.IText).fontWeight === "bold" ? "normal" : "bold"))}><Bold className="size-4" /></Button>
+                  <Button variant={(a as Fabric.IText).fontStyle === "italic" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as Fabric.IText).set("fontStyle", (a as Fabric.IText).fontStyle === "italic" ? "normal" : "italic"))}><Italic className="size-4" /></Button>
+                  <Button variant={(a as Fabric.IText).underline ? "default" : "outline"} size="sm" onClick={() => update(() => (a as Fabric.IText).set("underline", !(a as Fabric.IText).underline))}><Underline className="size-4" /></Button>
                 </div>
-                <ToggleGroup type="single" value={(a as fabric.IText).textAlign as string} onValueChange={(v) => v && update(() => (a as fabric.IText).set("textAlign", v))} className="justify-start">
+                <ToggleGroup type="single" value={(a as Fabric.IText).textAlign as string} onValueChange={(v) => v && update(() => (a as Fabric.IText).set("textAlign", v))} className="justify-start">
                   <ToggleGroupItem value="left"><AlignLeft className="size-4" /></ToggleGroupItem>
                   <ToggleGroupItem value="center"><AlignCenter className="size-4" /></ToggleGroupItem>
                   <ToggleGroupItem value="right"><AlignRight className="size-4" /></ToggleGroupItem>
@@ -410,7 +414,7 @@ function EditorPage() {
             )}
 
             {isImage && (
-              <ImageFilters image={a as fabric.FabricImage} onChange={() => { fcRef.current?.renderAll(); pushHistory(); refresh(); }} />
+              <ImageFilters fabric={fabric} image={a as Fabric.FabricImage} onChange={() => { fcRef.current?.renderAll(); pushHistory(); refresh(); }} />
             )}
 
             <div>
