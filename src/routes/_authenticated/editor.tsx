@@ -216,6 +216,120 @@ function EditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fabric, preset, getFitZoom]);
 
+  // Smart alignment guides while dragging
+  useEffect(() => {
+    const fc = fcRef.current;
+    if (!fc || !fabric) return;
+    const SNAP = 6;
+    let guides: Array<{ o: "h" | "v"; pos: number }> = [];
+
+    const drawGuides = () => {
+      const ctx = (fc as any).contextTop as CanvasRenderingContext2D;
+      const z = fc.getZoom();
+      ctx.save();
+      ctx.clearRect(0, 0, fc.width!, fc.height!);
+      ctx.strokeStyle = "#ec4899";
+      ctx.lineWidth = 1;
+      for (const g of guides) {
+        ctx.beginPath();
+        if (g.o === "v") { ctx.moveTo(g.pos * z, 0); ctx.lineTo(g.pos * z, fc.height!); }
+        else { ctx.moveTo(0, g.pos * z); ctx.lineTo(fc.width!, g.pos * z); }
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+    const clearGuides = () => {
+      guides = [];
+      const ctx = (fc as any).contextTop as CanvasRenderingContext2D;
+      ctx.clearRect(0, 0, fc.width!, fc.height!);
+    };
+
+    const onMoving = (e: any) => {
+      const obj = e.target as Fabric.Object | undefined;
+      if (!obj) return;
+      const cw = (fc as any).getWidth() / fc.getZoom();
+      const ch = (fc as any).getHeight() / fc.getZoom();
+      const b = obj.getBoundingRect();
+      const vTargets = [0, cw / 2, cw];
+      const hTargets = [0, ch / 2, ch];
+      for (const o of fc.getObjects()) {
+        if (o === obj) continue;
+        const ob = o.getBoundingRect();
+        vTargets.push(ob.left, ob.left + ob.width / 2, ob.left + ob.width);
+        hTargets.push(ob.top, ob.top + ob.height / 2, ob.top + ob.height);
+      }
+      const vEdges = [b.left, b.left + b.width / 2, b.left + b.width];
+      const hEdges = [b.top, b.top + b.height / 2, b.top + b.height];
+      guides = [];
+      let dx = 0, dy = 0, foundX = false, foundY = false;
+      for (let i = 0; i < vEdges.length && !foundX; i++) {
+        for (const t of vTargets) {
+          if (Math.abs(vEdges[i] - t) <= SNAP) {
+            dx = t - vEdges[i]; guides.push({ o: "v", pos: t }); foundX = true; break;
+          }
+        }
+      }
+      for (let i = 0; i < hEdges.length && !foundY; i++) {
+        for (const t of hTargets) {
+          if (Math.abs(hEdges[i] - t) <= SNAP) {
+            dy = t - hEdges[i]; guides.push({ o: "h", pos: t }); foundY = true; break;
+          }
+        }
+      }
+      if (dx || dy) {
+        obj.set({ left: (obj.left ?? 0) + dx, top: (obj.top ?? 0) + dy });
+        obj.setCoords();
+      }
+      drawGuides();
+    };
+
+    fc.on("object:moving", onMoving);
+    fc.on("mouse:up", clearGuides);
+    fc.on("object:modified", clearGuides);
+    return () => {
+      fc.off("object:moving", onMoving);
+      fc.off("mouse:up", clearGuides);
+      fc.off("object:modified", clearGuides);
+    };
+  }, [fabric, preset]);
+
+  // Keyboard: arrow-move and delete selected objects
+  useEffect(() => {
+    if (!fabric) return;
+    const onKey = (e: KeyboardEvent) => {
+      const fc = fcRef.current; if (!fc) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      const obj = fc.getActiveObject();
+      if (!obj) return;
+      // Don't intercept while editing text
+      if ((obj as any).isEditing) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        const objs = fc.getActiveObjects();
+        objs.forEach((o) => fc.remove(o));
+        fc.discardActiveObject();
+        fc.requestRenderAll();
+        return;
+      }
+      const step = e.shiftKey ? 10 : 1;
+      let moved = false;
+      if (e.key === "ArrowLeft") { obj.set({ left: (obj.left ?? 0) - step }); moved = true; }
+      else if (e.key === "ArrowRight") { obj.set({ left: (obj.left ?? 0) + step }); moved = true; }
+      else if (e.key === "ArrowUp") { obj.set({ top: (obj.top ?? 0) - step }); moved = true; }
+      else if (e.key === "ArrowDown") { obj.set({ top: (obj.top ?? 0) + step }); moved = true; }
+      if (moved) {
+        e.preventDefault();
+        obj.setCoords();
+        fc.requestRenderAll();
+        fc.fire("object:modified", { target: obj } as any);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fabric]);
+
   // Hydrate canvas from saved template JSON once canvas exists
   useEffect(() => {
     const fc = fcRef.current;
