@@ -141,9 +141,6 @@ export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
   } while (cursor);
   const flat = uniqueBySquareItemId(collected);
 
-  const priceMap: Record<string, number | null> = {};
-  for (const f of flat) priceMap[f.square_item_id] = f.price_cents;
-
   await supabaseAdmin.from("square_items_cache").delete().eq("user_id", userId);
   if (flat.length) {
     const rows = flat.map((f) => ({ ...f, user_id: userId }));
