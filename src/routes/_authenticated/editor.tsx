@@ -164,7 +164,7 @@ function EditorPage() {
       }
       setTemplateId(null);
       setPendingCanvasJson(null);
-      setPendingBaseImageUrl(signed.signedUrl);
+      setPendingBaseImage({ url: signed.signedUrl, path: variant.path });
     })();
   }, [imageIdParam, templateIdParam]);
 
@@ -214,19 +214,20 @@ function EditorPage() {
   // Convert a gallery image into an editable canvas layer when no template JSON exists
   useEffect(() => {
     const fc = fcRef.current;
-    if (!fc || !fabric || !pendingBaseImageUrl) return;
+    if (!fc || !fabric || !pendingBaseImage) return;
     historyRef.current.suspend = true;
     (async () => {
       try {
         fc.clear();
         fc.backgroundColor = bgColor;
-        const img = await fabric.FabricImage.fromURL(pendingBaseImageUrl, { crossOrigin: "anonymous" });
+        const img = await fabric.FabricImage.fromURL(pendingBaseImage.url, { crossOrigin: "anonymous" });
         const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!, 1);
         img.scale(scale);
         img.set({
           left: (fc.width! - img.width! * scale) / 2,
           top: (fc.height! - img.height! * scale) / 2,
           selectable: true,
+          imageStoragePath: pendingBaseImage.path,
         });
         fc.add(img);
         fc.setActiveObject(img);
@@ -237,12 +238,12 @@ function EditorPage() {
         historyRef.current.suspend = false;
         historyRef.current = { stack: [], index: -1, suspend: false };
         pushHistory();
-        setPendingBaseImageUrl(null);
+        setPendingBaseImage(null);
         refresh();
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingBaseImageUrl, fabric, preset]);
+  }, [pendingBaseImage, fabric, preset]);
 
   // Apply zoom
   useEffect(() => {
@@ -277,7 +278,7 @@ function EditorPage() {
       const v = variants[0];
       if (!v) continue;
       const { data: signed } = await supabase.storage.from("images").createSignedUrl(v.path, 3600);
-      if (signed?.signedUrl) out.push({ id: row.id, title: row.title, url: signed.signedUrl });
+      if (signed?.signedUrl) out.push({ id: row.id, title: row.title, url: signed.signedUrl, path: v.path });
     }
     setAssets(out);
   };
