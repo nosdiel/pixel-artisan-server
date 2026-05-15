@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -206,6 +206,9 @@ function TemplatesPage() {
                     <p className="text-xs text-muted-foreground mt-0.5">{bindings.length} Square binding{bindings.length === 1 ? "" : "s"}</p>
                   </div>
                   <div className="flex gap-2">
+                    <Button size="sm" asChild>
+                      <Link to="/editor" search={{ template: t.id }}>Edit</Link>
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => openEdit(t)}>
                       Edit bindings
                     </Button>
