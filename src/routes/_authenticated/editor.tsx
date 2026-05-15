@@ -878,6 +878,10 @@ function EditorPage() {
                 <Upload className="size-4" /> Upload image
                 <input type="file" accept="image/*" className="hidden" onChange={onUploadImage} />
               </label>
+              <label className="flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-sm cursor-pointer hover:bg-accent">
+                <VideoIcon className="size-4" /> Upload video
+                <input type="file" accept="video/*" className="hidden" onChange={onUploadVideo} />
+              </label>
             </div>
           </TabsContent>
 
