@@ -2,9 +2,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Plus, ImageOff } from "lucide-react";
+import { Plus, ImageOff, Pencil } from "lucide-react";
 
-type ImageRow = { id: string; slug: string; title: string; width: number; height: number; optimized_size_bytes: number; original_size_bytes: number; variants: { format: string; path: string }[]; created_at: string };
+type ImageRow = { id: string; slug: string; title: string; width: number; height: number; optimized_size_bytes: number; original_size_bytes: number; variants: { format: string; path: string }[]; created_at: string; template_id: string | null };
 
 export const Route = createFileRoute("/_authenticated/dashboard")({ component: Dashboard });
 
@@ -68,6 +68,13 @@ function Dashboard() {
                     <span>{img.width}×{img.height}</span>
                     <span className="text-success">−{saved}%</span>
                   </div>
+                  {img.template_id && (
+                    <Link to="/editor" search={{ template: img.template_id }} className="block mt-2">
+                      <Button variant="outline" size="sm" className="w-full">
+                        <Pencil className="size-3.5 mr-1.5" /> Edit as template
+                      </Button>
+                    </Link>
+                  )}
                 </div>
               </div>
             );
