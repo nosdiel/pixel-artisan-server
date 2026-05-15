@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as fabric from "fabric";
+import type * as Fabric from "fabric";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,27 +35,37 @@ const FONTS = ["Inter", "Arial", "Georgia", "Times New Roman", "Courier New", "I
 const SWATCHES = ["#000000", "#ffffff", "#ef4444", "#f97316", "#f59e0b", "#10b981", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
 
 type Asset = { id: string; title: string; url: string };
+type FabricModule = typeof import("fabric");
 
 export const Route = createFileRoute("/_authenticated/editor")({ component: EditorPage, ssr: false });
 
 function EditorPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fcRef = useRef<fabric.Canvas | null>(null);
+  const fcRef = useRef<Fabric.Canvas | null>(null);
   const historyRef = useRef<{ stack: string[]; index: number; suspend: boolean }>({ stack: [], index: -1, suspend: false });
+  const [fabric, setFabric] = useState<FabricModule | null>(null);
   const [preset, setPreset] = useState("1920x1080");
   const [title, setTitle] = useState("Untitled");
   const [bgColor, setBgColor] = useState("#ffffff");
   const [zoom, setZoom] = useState(0.4);
-  const [active, setActive] = useState<fabric.Object | null>(null);
+  const [active, setActive] = useState<Fabric.Object | null>(null);
   const [, forceUpdate] = useState(0);
   const refresh = useCallback(() => forceUpdate((n) => n + 1), []);
   const [saving, setSaving] = useState(false);
   const [assets, setAssets] = useState<Asset[]>([]);
   const navigate = useNavigate();
 
+  useEffect(() => {
+    let mounted = true;
+    void import("fabric").then((mod) => {
+      if (mounted) setFabric(mod);
+    });
+    return () => { mounted = false; };
+  }, []);
+
   // Initialize canvas
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!fabric || !canvasRef.current) return;
     const { w, h } = PRESETS[preset];
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
@@ -74,7 +84,7 @@ function EditorPage() {
     pushHistory();
     return () => { fc.dispose(); fcRef.current = null; historyRef.current = { stack: [], index: -1, suspend: false }; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset]);
+  }, [fabric, preset]);
 
   // Apply zoom
   useEffect(() => {
@@ -142,7 +152,7 @@ function EditorPage() {
 
   // Add helpers
   const addImageFromUrl = async (url: string) => {
-    const fc = fcRef.current; if (!fc) return;
+    const fc = fcRef.current; if (!fc || !fabric) return;
     const img = await fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
     const scale = Math.min(max / img.width!, max / img.height!, 1);
@@ -157,7 +167,7 @@ function EditorPage() {
     e.target.value = "";
   };
   const addText = () => {
-    const fc = fcRef.current; if (!fc) return;
+    const fc = fcRef.current; if (!fc || !fabric) return;
     const t = new fabric.IText("Your text", {
       left: fc.width! / 2 - 200, top: fc.height! / 2 - 40, fontSize: 80, fill: "#111827",
       fontFamily: "Inter", originX: "left", originY: "top",
@@ -165,9 +175,9 @@ function EditorPage() {
     fc.add(t); fc.setActiveObject(t); fc.renderAll();
   };
   const addShape = (kind: "rect" | "circle" | "triangle") => {
-    const fc = fcRef.current; if (!fc) return;
+    const fc = fcRef.current; if (!fc || !fabric) return;
     const common = { left: fc.width! / 2 - 150, top: fc.height! / 2 - 150, fill: "#3b82f6" };
-    let o: fabric.Object;
+    let o: Fabric.Object;
     if (kind === "rect") o = new fabric.Rect({ ...common, width: 300, height: 200 });
     else if (kind === "circle") o = new fabric.Circle({ ...common, radius: 120 });
     else o = new fabric.Triangle({ ...common, width: 240, height: 240 });
@@ -188,8 +198,12 @@ function EditorPage() {
   const flipH = () => { if (a) update(() => a.set("flipX", !a.flipX)); };
   const flipV = () => { if (a) update(() => a.set("flipY", !a.flipY)); };
 
-  const isText = a instanceof fabric.IText || a instanceof fabric.Textbox;
-  const isImage = a instanceof fabric.FabricImage;
+  if (!fabric) {
+    return <div className="flex h-screen items-center justify-center bg-muted/30 text-muted-foreground">Loading editor…</div>;
+  }
+
+  const isText = !!fabric && (a instanceof fabric.IText || a instanceof fabric.Textbox);
+  const isImage = !!fabric && a instanceof fabric.FabricImage;
   const objects = fcRef.current?.getObjects() ?? [];
 
   const onSave = async () => {
@@ -363,21 +377,21 @@ function EditorPage() {
               <>
                 <div>
                   <Label className="text-xs">Font</Label>
-                  <Select value={(a as fabric.IText).fontFamily as string} onValueChange={(v) => update(() => (a as fabric.IText).set("fontFamily", v))}>
+                  <Select value={(a as Fabric.IText).fontFamily as string} onValueChange={(v) => update(() => (a as Fabric.IText).set("fontFamily", v))}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>{FONTS.map((f) => <SelectItem key={f} value={f} style={{ fontFamily: f }}>{f}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-xs">Size ({(a as fabric.IText).fontSize})</Label>
-                  <Slider min={8} max={400} step={1} value={[(a as fabric.IText).fontSize as number]} onValueChange={(v) => update(() => (a as fabric.IText).set("fontSize", v[0]))} className="mt-2" />
+                  <Label className="text-xs">Size ({(a as Fabric.IText).fontSize})</Label>
+                  <Slider min={8} max={400} step={1} value={[(a as Fabric.IText).fontSize as number]} onValueChange={(v) => update(() => (a as Fabric.IText).set("fontSize", v[0]))} className="mt-2" />
                 </div>
                 <div className="flex gap-1">
-                  <Button variant={(a as fabric.IText).fontWeight === "bold" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("fontWeight", (a as fabric.IText).fontWeight === "bold" ? "normal" : "bold"))}><Bold className="size-4" /></Button>
-                  <Button variant={(a as fabric.IText).fontStyle === "italic" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("fontStyle", (a as fabric.IText).fontStyle === "italic" ? "normal" : "italic"))}><Italic className="size-4" /></Button>
-                  <Button variant={(a as fabric.IText).underline ? "default" : "outline"} size="sm" onClick={() => update(() => (a as fabric.IText).set("underline", !(a as fabric.IText).underline))}><Underline className="size-4" /></Button>
+                  <Button variant={(a as Fabric.IText).fontWeight === "bold" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as Fabric.IText).set("fontWeight", (a as Fabric.IText).fontWeight === "bold" ? "normal" : "bold"))}><Bold className="size-4" /></Button>
+                  <Button variant={(a as Fabric.IText).fontStyle === "italic" ? "default" : "outline"} size="sm" onClick={() => update(() => (a as Fabric.IText).set("fontStyle", (a as Fabric.IText).fontStyle === "italic" ? "normal" : "italic"))}><Italic className="size-4" /></Button>
+                  <Button variant={(a as Fabric.IText).underline ? "default" : "outline"} size="sm" onClick={() => update(() => (a as Fabric.IText).set("underline", !(a as Fabric.IText).underline))}><Underline className="size-4" /></Button>
                 </div>
-                <ToggleGroup type="single" value={(a as fabric.IText).textAlign as string} onValueChange={(v) => v && update(() => (a as fabric.IText).set("textAlign", v))} className="justify-start">
+                <ToggleGroup type="single" value={(a as Fabric.IText).textAlign as string} onValueChange={(v) => v && update(() => (a as Fabric.IText).set("textAlign", v))} className="justify-start">
                   <ToggleGroupItem value="left"><AlignLeft className="size-4" /></ToggleGroupItem>
                   <ToggleGroupItem value="center"><AlignCenter className="size-4" /></ToggleGroupItem>
                   <ToggleGroupItem value="right"><AlignRight className="size-4" /></ToggleGroupItem>
@@ -400,7 +414,7 @@ function EditorPage() {
             )}
 
             {isImage && (
-              <ImageFilters image={a as fabric.FabricImage} onChange={() => { fcRef.current?.renderAll(); pushHistory(); refresh(); }} />
+              <ImageFilters fabric={fabric} image={a as Fabric.FabricImage} onChange={() => { fcRef.current?.renderAll(); pushHistory(); refresh(); }} />
             )}
 
             <div>
@@ -431,11 +445,11 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
-function ImageFilters({ image, onChange }: { image: fabric.FabricImage; onChange: () => void }) {
-  const getFilter = <T,>(Type: new (opts: any) => T): T | undefined => image.filters.find((f) => f instanceof (Type as any)) as T | undefined;
-  const setFilter = <T,>(Type: new (opts: any) => T, opts: any) => {
-    image.filters = image.filters.filter((f) => !(f instanceof (Type as any)));
-    image.filters.push(new Type(opts) as any);
+function ImageFilters({ fabric, image, onChange }: { fabric: FabricModule; image: Fabric.FabricImage; onChange: () => void }) {
+  const getFilter = (Type: any) => image.filters.find((f: unknown) => f instanceof Type) as any;
+  const setFilter = (Type: any, opts: Record<string, number>) => {
+    image.filters = image.filters.filter((f: unknown) => !(f instanceof Type));
+    image.filters.push(new Type(opts));
     image.applyFilters();
     onChange();
   };
