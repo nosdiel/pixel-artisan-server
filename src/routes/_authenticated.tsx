@@ -1,4 +1,5 @@
 import { createFileRoute, Link, Outlet, redirect, useNavigate, useLocation } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { useAuth } from "@/lib/use-auth";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -11,11 +12,16 @@ function AuthLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      navigate({ to: "/login" });
+    }
+  }, [loading, isAuthenticated, navigate]);
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Loading…</div>;
   }
   if (!isAuthenticated) {
-    navigate({ to: "/login" });
     return null;
   }
 
