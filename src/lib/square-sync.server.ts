@@ -116,10 +116,12 @@ export type ConnectionSource = {
 };
 
 /** Resolve a single page of items for either source. Online-site source returns everything in one page. */
-export async function fetchSourcePage(conn: ConnectionSource, cursor?: string) {
+type FlatRow = ReturnType<typeof flattenItem>[number];
+
+export async function fetchSourcePage(conn: ConnectionSource, cursor?: string): Promise<{ items: FlatRow[]; cursor: string | undefined }> {
   if (conn.source === "online_site") {
     if (!conn.site_url) throw new Error("Square Online site URL is not set");
-    if (cursor) return { items: [] as ReturnType<typeof flattenItem>[], cursor: undefined };
+    if (cursor) return { items: [], cursor: undefined };
     const items = await fetchOnlineSiteCatalog(conn.site_url);
     return { items, cursor: undefined };
   }
@@ -130,7 +132,7 @@ export async function fetchSourcePage(conn: ConnectionSource, cursor?: string) {
 
 /** Run sync + stale detection for a single user, using the admin client. */
 export async function syncUserCatalog(userId: string, conn: ConnectionSource) {
-  const collected: ReturnType<typeof flattenItem>[] = [];
+  const collected: FlatRow[] = [];
   let cursor: string | undefined;
   do {
     const page = await fetchSourcePage(conn, cursor);
