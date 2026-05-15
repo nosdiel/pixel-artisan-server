@@ -70,7 +70,7 @@ function Dashboard() {
                   </div>
                   <Link
                     to="/editor"
-                    search={img.template_id ? { template: img.template_id } : { image: img.id }}
+                    search={img.template_id ? { template: img.template_id, image: img.id } : { image: img.id }}
                     className="block mt-2"
                   >
                     <Button variant="outline" size="sm" className="w-full">
