@@ -125,6 +125,36 @@ export type Database = {
         }
         Relationships: []
       }
+      signage_settings: {
+        Row: {
+          auto_publish_enabled: boolean
+          company_id: string | null
+          created_at: string
+          renderer_auth_token: string | null
+          renderer_url: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          auto_publish_enabled?: boolean
+          company_id?: string | null
+          created_at?: string
+          renderer_auth_token?: string | null
+          renderer_url?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          auto_publish_enabled?: boolean
+          company_id?: string | null
+          created_at?: string
+          renderer_auth_token?: string | null
+          renderer_url?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       square_connections: {
         Row: {
           access_token: string | null
@@ -304,6 +334,10 @@ export type Database = {
           id: string
           is_stale: boolean
           last_price_snapshot: Json | null
+          last_publish_error: string | null
+          last_publish_status: string | null
+          last_published_at: string | null
+          last_published_url: string | null
           name: string
           preset: string
           square_bindings: Json
@@ -319,6 +353,10 @@ export type Database = {
           id?: string
           is_stale?: boolean
           last_price_snapshot?: Json | null
+          last_publish_error?: string | null
+          last_publish_status?: string | null
+          last_published_at?: string | null
+          last_published_url?: string | null
           name?: string
           preset?: string
           square_bindings?: Json
@@ -334,6 +372,10 @@ export type Database = {
           id?: string
           is_stale?: boolean
           last_price_snapshot?: Json | null
+          last_publish_error?: string | null
+          last_publish_status?: string | null
+          last_published_at?: string | null
+          last_published_url?: string | null
           name?: string
           preset?: string
           square_bindings?: Json

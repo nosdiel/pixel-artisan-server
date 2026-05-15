@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
 import { fetchOnlineSiteCatalog } from "./square-online.server";
 import { fetchToastCatalog } from "./toast.server";
+import { autoPublishStaleTemplates } from "./signage.server";
 
 type SquareItem = {
   id: string;
@@ -201,6 +202,7 @@ export async function recomputeStaleTemplates(userId: string) {
 
   let staleCount = 0;
   let updatedCount = 0;
+  const changedTemplateIds: string[] = [];
   for (const t of templates ?? []) {
     const bindings = (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
     const snapshot = (t.last_price_snapshot as Record<string, number | null> | null) ?? {};
@@ -224,13 +226,27 @@ export async function recomputeStaleTemplates(userId: string) {
         .update({ canvas_json: nextCanvas as Json, last_price_snapshot: nextSnapshot, is_stale: false })
         .eq("id", t.id);
       updatedCount++;
+      changedTemplateIds.push(t.id);
     } else if (priceChanged && !t.is_stale) {
       // Template-level binding price changed but no auto-updatable text layers — flag for manual review
       staleCount++;
       await supabaseAdmin.from("templates").update({ is_stale: true }).eq("id", t.id);
+      changedTemplateIds.push(t.id);
     }
   }
-  return { staleCount, updatedCount, total: staleCount + updatedCount };
+
+  // Auto-publish to renderer (Firebase) if enabled. Errors are logged on each
+  // template's last_publish_error and don't block the sync result.
+  let autoPublished = 0;
+  if (changedTemplateIds.length) {
+    try {
+      const r = await autoPublishStaleTemplates(userId, changedTemplateIds);
+      autoPublished = r.published;
+    } catch (e) {
+      console.error("autoPublishStaleTemplates failed", e);
+    }
+  }
+  return { staleCount, updatedCount, total: staleCount + updatedCount, autoPublished };
 }
 
 type CacheItem = { name: string | null; description: string | null; price_cents: number | null; currency: string | null };

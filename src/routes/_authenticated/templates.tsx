@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+import { RefreshCw, AlertCircle, CheckCircle2, UploadCloud, ExternalLink } from "lucide-react";
 import {
   listSquareItems,
   listTemplatesWithStatus,
@@ -26,6 +26,7 @@ import {
   setTemplateBindings,
   deleteTemplate,
 } from "@/lib/square.functions";
+import { publishTemplate, listTemplatesWithPublishStatus } from "@/lib/signage.functions";
 
 export const Route = createFileRoute("/_authenticated/templates")({ component: TemplatesPage });
 
@@ -47,10 +48,29 @@ function TemplatesPage() {
   const fetchLatestJob = useServerFn(getLatestSquareSyncJob);
   const saveBindings = useServerFn(setTemplateBindings);
   const deleteTpl = useServerFn(deleteTemplate);
+  const publishTpl = useServerFn(publishTemplate);
+  const fetchPublishStatus = useServerFn(listTemplatesWithPublishStatus);
 
   const itemsQ = useQuery({ queryKey: ["square-items"], queryFn: () => fetchItems() });
   const tplQ = useQuery({ queryKey: ["templates"], queryFn: () => fetchTemplates() });
   const latestJobQ = useQuery({ queryKey: ["sync-job-latest"], queryFn: () => fetchLatestJob() });
+  const publishStatusQ = useQuery({
+    queryKey: ["templates-publish-status"],
+    queryFn: () => fetchPublishStatus(),
+  });
+
+  const publishM = useMutation({
+    mutationFn: (templateId: string) => publishTpl({ data: { templateId } }),
+    onSuccess: (r) => {
+      toast.success(r.downloadUrl ? "Published to Firebase" : "Renderer accepted job");
+      qc.invalidateQueries({ queryKey: ["templates-publish-status"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const publishById = new Map(
+    (publishStatusQ.data?.rows ?? []).map((r) => [r.id, r] as const),
+  );
 
   const [running, setRunning] = useState(false);
   const [processed, setProcessed] = useState(0);
@@ -218,8 +238,46 @@ function TemplatesPage() {
                       ) : (
                         <Badge className="gap-1 bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/15"><CheckCircle2 className="h-3 w-3" />Fresh</Badge>
                       )}
+                      {(() => {
+                        const ps = publishById.get(t.id);
+                        if (!ps?.last_publish_status) return null;
+                        if (ps.last_publish_status === "success") {
+                          return (
+                            <Badge className="gap-1 bg-blue-500/15 text-blue-600 hover:bg-blue-500/15">
+                              <UploadCloud className="h-3 w-3" />Published
+                            </Badge>
+                          );
+                        }
+                        return (
+                          <Badge variant="destructive" className="gap-1" title={ps.last_publish_error ?? ""}>
+                            <AlertCircle className="h-3 w-3" />Publish failed
+                          </Badge>
+                        );
+                      })()}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">{bindings.length} Square binding{bindings.length === 1 ? "" : "s"}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {bindings.length} Square binding{bindings.length === 1 ? "" : "s"}
+                      {(() => {
+                        const ps = publishById.get(t.id);
+                        if (!ps?.last_published_at) return null;
+                        return (
+                          <>
+                            {" · Last published "}
+                            {new Date(ps.last_published_at).toLocaleString()}
+                            {ps.last_published_url && (
+                              <a
+                                href={ps.last_published_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-0.5 ml-1 underline"
+                              >
+                                view <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </p>
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" asChild>
@@ -233,6 +291,16 @@ function TemplatesPage() {
                         Mark fresh
                       </Button>
                     )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1"
+                      onClick={() => publishM.mutate(t.id)}
+                      disabled={publishM.isPending}
+                    >
+                      <UploadCloud className="h-4 w-4" />
+                      {publishM.isPending && publishM.variables === t.id ? "Publishing…" : "Publish"}
+                    </Button>
                     <Button
                       size="sm"
                       variant="outline"

@@ -14,6 +14,11 @@ import {
   startSquareSyncJob,
   stepSquareSyncJob,
 } from "@/lib/square.functions";
+import {
+  getSignageSettings,
+  saveSignageSettings,
+  testRenderer,
+} from "@/lib/signage.functions";
 
 export const Route = createFileRoute("/_authenticated/settings")({ component: SettingsPage });
 
@@ -35,6 +40,16 @@ function SettingsPage() {
   const save = useServerFn(saveSquareConnection);
   const startJob = useServerFn(startSquareSyncJob);
   const stepJob = useServerFn(stepSquareSyncJob);
+  const fetchSignage = useServerFn(getSignageSettings);
+  const saveSignage = useServerFn(saveSignageSettings);
+  const pingRenderer = useServerFn(testRenderer);
+
+  const [companyId, setCompanyId] = useState("");
+  const [rendererUrl, setRendererUrl] = useState("");
+  const [rendererToken, setRendererToken] = useState("");
+  const [autoPublish, setAutoPublish] = useState(false);
+  const [signageSaving, setSignageSaving] = useState(false);
+  const [signageTesting, setSignageTesting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -52,8 +67,51 @@ function SettingsPage() {
         setToastClientId(data.client_id ?? "");
         setToastRestaurantGuid(data.restaurant_guid ?? "");
       }
+      try {
+        const r = await fetchSignage();
+        if (r.settings) {
+          setCompanyId(r.settings.company_id ?? "");
+          setRendererUrl(r.settings.renderer_url ?? "");
+          setRendererToken(r.settings.renderer_auth_token ?? "");
+          setAutoPublish(!!r.settings.auto_publish_enabled);
+        }
+      } catch {
+        /* ignore — settings may not exist yet */
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleSaveSignage = async () => {
+    setSignageSaving(true);
+    try {
+      await saveSignage({
+        data: {
+          company_id: companyId.trim(),
+          renderer_url: rendererUrl.trim(),
+          renderer_auth_token: rendererToken.trim() || null,
+          auto_publish_enabled: autoPublish,
+        },
+      });
+      toast.success("Signage publishing settings saved");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSignageSaving(false);
+    }
+  };
+
+  const handleTestRenderer = async () => {
+    setSignageTesting(true);
+    try {
+      const r = await pingRenderer();
+      toast.success(`Renderer reachable${r.body ? ` · ${r.body}` : ""}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSignageTesting(false);
+    }
+  };
 
   const handleSave = async () => {
     setLoading(true);
@@ -235,6 +293,68 @@ function SettingsPage() {
             </div>
           </>
         )}
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-6 shadow-[var(--shadow-card)] mt-8">
+        <h2 className="font-semibold mb-1">Signage publishing (Firebase)</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Send rendered images to your Firebase signage app via your external renderer service.
+          The renderer handles Firebase Storage upload and Firestore updates — your service account stays on the renderer, never in this app.
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <Label>Company ID</Label>
+            <Input
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              placeholder="e.g. pasta-mista-towson"
+              className="mt-1"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Used in Firebase paths: <code>rendered/{`{companyId}`}/{`{templateId}`}/latest.png</code>. Must be stable.
+            </p>
+          </div>
+          <div>
+            <Label>Renderer URL</Label>
+            <Input
+              value={rendererUrl}
+              onChange={(e) => setRendererUrl(e.target.value)}
+              placeholder="https://renderer-xxxx.run.app"
+              className="mt-1"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Public URL of your Puppeteer renderer service. Must expose <code>POST /render</code> and <code>GET /health</code>.
+            </p>
+          </div>
+          <div>
+            <Label>Renderer auth token (optional)</Label>
+            <Input
+              type="password"
+              value={rendererToken}
+              onChange={(e) => setRendererToken(e.target.value)}
+              placeholder="Bearer token shared with the renderer"
+              className="mt-1"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4 pt-2">
+            <div>
+              <Label className="text-base">Auto-publish on price change</Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                When sync detects a price change, automatically render and push the image to Firebase.
+              </p>
+            </div>
+            <Switch checked={autoPublish} onCheckedChange={setAutoPublish} />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <Button onClick={handleSaveSignage} disabled={!companyId.trim() || !rendererUrl.trim() || signageSaving}>
+              {signageSaving ? "Saving…" : "Save signage settings"}
+            </Button>
+            <Button variant="outline" onClick={handleTestRenderer} disabled={!rendererUrl.trim() || signageTesting}>
+              {signageTesting ? "Testing…" : "Test renderer"}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
