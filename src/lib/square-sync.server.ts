@@ -23,6 +23,26 @@ const SQUARE_HOSTS = {
   sandbox: "https://connect.squareupsandbox.com",
 } as const;
 
+export async function fetchCatalogPage(token: string, env: string, cursor?: string) {
+  const host = SQUARE_HOSTS[env as keyof typeof SQUARE_HOSTS] ?? SQUARE_HOSTS.production;
+  const url = new URL(`${host}/v2/catalog/list`);
+  url.searchParams.set("types", "ITEM");
+  if (cursor) url.searchParams.set("cursor", cursor);
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Square-Version": "2024-10-17",
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Square API error ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as { objects?: SquareItem[]; cursor?: string };
+  return { items: json.objects ?? [], cursor: json.cursor };
+}
+
 export async function fetchAllCatalog(token: string, env: string) {
   const host = SQUARE_HOSTS[env as keyof typeof SQUARE_HOSTS] ?? SQUARE_HOSTS.production;
   const items: SquareItem[] = [];
@@ -104,4 +124,36 @@ export async function syncUserCatalog(userId: string, token: string, env: string
   }
 
   return { itemCount: flat.length, staleCount };
+}
+
+/** Compare each template's last price snapshot against current cache and flip is_stale on changes. */
+export async function recomputeStaleTemplates(userId: string) {
+  const { data: items } = await supabaseAdmin
+    .from("square_items_cache")
+    .select("square_item_id, price_cents")
+    .eq("user_id", userId);
+  const priceMap: Record<string, number | null> = {};
+  for (const it of items ?? []) priceMap[it.square_item_id] = it.price_cents;
+
+  const { data: templates } = await supabaseAdmin
+    .from("templates")
+    .select("id, square_bindings, last_price_snapshot, is_stale")
+    .eq("user_id", userId);
+
+  let staleCount = 0;
+  for (const t of templates ?? []) {
+    const bindings = (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
+    if (!bindings.length) continue;
+    const snapshot = (t.last_price_snapshot as Record<string, number | null> | null) ?? {};
+    let stale = false;
+    for (const b of bindings) {
+      const current = priceMap[b.square_item_id] ?? null;
+      if (snapshot[b.square_item_id] !== current) stale = true;
+    }
+    if (stale && !t.is_stale) {
+      staleCount++;
+      await supabaseAdmin.from("templates").update({ is_stale: true }).eq("id", t.id);
+    }
+  }
+  return staleCount;
 }
