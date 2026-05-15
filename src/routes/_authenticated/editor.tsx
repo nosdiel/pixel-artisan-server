@@ -397,12 +397,30 @@ function EditorPage() {
       : (fc.getObjects().find((o) => o instanceof fabric.FabricImage) as Fabric.FabricImage | undefined);
     if (!target) { toast.error("No image on the canvas to fit"); return; }
     update(() => {
-      target.set({ angle: 0, flipX: false, flipY: false, skewX: 0, skewY: 0, originX: "left", originY: "top" });
-      const scale = Math.min(fc.width! / target.width!, fc.height! / target.height!);
-      target.scale(scale);
       target.set({
-        left: (fc.width! - target.width! * scale) / 2,
-        top: (fc.height! - target.height! * scale) / 2,
+        angle: 0,
+        flipX: false,
+        flipY: false,
+        skewX: 0,
+        skewY: 0,
+        cropX: 0,
+        cropY: 0,
+        originX: "left",
+        originY: "top",
+        scaleX: 1,
+        scaleY: 1,
+        strokeWidth: 0,
+        padding: 0,
+      });
+      const cw = fc.getWidth();
+      const ch = fc.getHeight();
+      const iw = target.width!;
+      const ih = target.height!;
+      const scale = Math.min(cw / iw, ch / ih);
+      target.set({ scaleX: scale, scaleY: scale });
+      target.set({
+        left: (cw - iw * scale) / 2,
+        top: (ch - ih * scale) / 2,
       });
       target.setCoords();
       fc.setActiveObject(target);
