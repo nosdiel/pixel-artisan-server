@@ -4,6 +4,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
 import {
@@ -13,6 +23,7 @@ import {
   startSquareSyncJob,
   stepSquareSyncJob,
   getLatestSquareSyncJob,
+  setTemplateBindings,
 } from "@/lib/square.functions";
 
 export const Route = createFileRoute("/_authenticated/templates")({ component: TemplatesPage });
@@ -33,6 +44,7 @@ function TemplatesPage() {
   const startJob = useServerFn(startSquareSyncJob);
   const stepJob = useServerFn(stepSquareSyncJob);
   const fetchLatestJob = useServerFn(getLatestSquareSyncJob);
+  const saveBindings = useServerFn(setTemplateBindings);
 
   const itemsQ = useQuery({ queryKey: ["square-items"], queryFn: () => fetchItems() });
   const tplQ = useQuery({ queryKey: ["templates"], queryFn: () => fetchTemplates() });
@@ -97,6 +109,33 @@ function TemplatesPage() {
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+
+  const [editing, setEditing] = useState<{ id: string; name: string } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const bindM = useMutation({
+    mutationFn: (vars: { templateId: string; squareItemIds: string[] }) =>
+      saveBindings({ data: vars }),
+    onSuccess: () => {
+      toast.success("Bindings saved");
+      qc.invalidateQueries({ queryKey: ["templates"] });
+      setEditing(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const openEdit = (t: { id: string; name: string; square_bindings: unknown }) => {
+    const bindings = (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
+    setSelected(new Set(bindings.map((b) => b.square_item_id)));
+    setSearch("");
+    setEditing({ id: t.id, name: t.name });
+  };
+
+  const filteredItems = (itemsQ.data?.items ?? []).filter((it) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (it.name ?? "").toLowerCase().includes(q) || it.square_item_id.toLowerCase().includes(q);
   });
 
   const lastJob = latestJobQ.data?.job;
