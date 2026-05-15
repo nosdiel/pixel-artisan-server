@@ -13,7 +13,7 @@ export const syncSquareCatalog = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const { data: conn, error: connErr } = await supabase
       .from("square_connections")
-      .select("source, access_token, environment, site_url")
+      .select("source, access_token, environment, site_url, client_id, client_secret, restaurant_guid")
       .maybeSingle();
     if (connErr) throw new Error(connErr.message);
     if (!conn) throw new Error("Square is not connected. Add a token in Settings first.");
@@ -27,7 +27,7 @@ export const startSquareSyncJob = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const { data: conn } = await supabase
       .from("square_connections")
-      .select("source, access_token, environment, site_url")
+      .select("source, access_token, environment, site_url, client_id, client_secret, restaurant_guid")
       .maybeSingle();
     if (!conn) throw new Error("Square is not connected. Configure it in Settings first.");
 
@@ -67,7 +67,7 @@ export const stepSquareSyncJob = createServerFn({ method: "POST" })
 
     const { data: conn } = await supabase
       .from("square_connections")
-      .select("source, access_token, environment, site_url")
+      .select("source, access_token, environment, site_url, client_id, client_secret, restaurant_guid")
       .maybeSingle();
     if (!conn) throw new Error("Square connection missing");
 
@@ -160,7 +160,7 @@ export const getSquareConnection = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data } = await context.supabase
       .from("square_connections")
-      .select("source, environment, site_url, last_sync_at, auto_sync_enabled, merchant_id")
+      .select("source, environment, site_url, last_sync_at, auto_sync_enabled, merchant_id, client_id, restaurant_guid")
       .maybeSingle();
     return { connection: data };
   });
@@ -177,6 +177,13 @@ export const saveSquareConnection = createServerFn({ method: "POST" })
       z.object({
         source: z.literal("online_site"),
         site_url: z.string().url().max(500),
+      }),
+      z.object({
+        source: z.literal("toast_api"),
+        environment: z.enum(["production", "sandbox"]),
+        client_id: z.string().min(4).max(200),
+        client_secret: z.string().min(4).max(2000),
+        restaurant_guid: z.string().min(4).max(200),
       }),
     ]).parse(d),
   )
@@ -201,13 +208,30 @@ export const saveSquareConnection = createServerFn({ method: "POST" })
             access_token: data.access_token,
             environment: data.environment,
             site_url: null,
+            client_id: null,
+            client_secret: null,
+            restaurant_guid: null,
           }
-        : {
+        : data.source === "online_site"
+        ? {
             user_id: context.userId,
             source: "online_site",
             access_token: null,
             environment: "production",
             site_url: data.site_url,
+            client_id: null,
+            client_secret: null,
+            restaurant_guid: null,
+          }
+        : {
+            user_id: context.userId,
+            source: "toast_api",
+            access_token: null,
+            environment: data.environment,
+            site_url: null,
+            client_id: data.client_id,
+            client_secret: data.client_secret,
+            restaurant_guid: data.restaurant_guid,
           }
     ) as never;
     const { error } = await context.supabase.from("square_connections").upsert(row);

@@ -129,11 +129,14 @@ export type Database = {
         Row: {
           access_token: string | null
           auto_sync_enabled: boolean
+          client_id: string | null
+          client_secret: string | null
           created_at: string
           environment: string
           last_sync_at: string | null
           location_id: string | null
           merchant_id: string | null
+          restaurant_guid: string | null
           site_url: string | null
           source: string
           updated_at: string
@@ -142,11 +145,14 @@ export type Database = {
         Insert: {
           access_token?: string | null
           auto_sync_enabled?: boolean
+          client_id?: string | null
+          client_secret?: string | null
           created_at?: string
           environment?: string
           last_sync_at?: string | null
           location_id?: string | null
           merchant_id?: string | null
+          restaurant_guid?: string | null
           site_url?: string | null
           source?: string
           updated_at?: string
@@ -155,11 +161,14 @@ export type Database = {
         Update: {
           access_token?: string | null
           auto_sync_enabled?: boolean
+          client_id?: string | null
+          client_secret?: string | null
           created_at?: string
           environment?: string
           last_sync_at?: string | null
           location_id?: string | null
           merchant_id?: string | null
+          restaurant_guid?: string | null
           site_url?: string | null
           source?: string
           updated_at?: string
