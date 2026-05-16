@@ -112,6 +112,14 @@ async function inlineCanvasImages(canvasJson) {
 
 app.post("/render", authMiddleware, async (req, res) => {
   const { templateId, companyId, name, width, height, canvasJson } = req.body || {};
+  console.log("RENDER PAYLOAD", {
+    templateId: req.body.templateId,
+    companyId: req.body.companyId,
+    width: req.body.width,
+    height: req.body.height,
+    hasCanvasJson: !!req.body.canvasJson,
+    objectCount: req.body.canvasJson?.objects?.length,
+  });
   if (!templateId || !companyId || !canvasJson || !width || !height) {
     return res.status(400).json({ success: false, error: "Missing required fields" });
   }
