@@ -29,6 +29,7 @@ import {
 import {
   prepareTemplatePublish,
   publishRenderedTemplate,
+  publishRenderedVideoTemplate,
   listTemplatesWithPublishStatus,
 } from "@/lib/signage.functions";
 
@@ -54,6 +55,7 @@ function TemplatesPage() {
   const deleteTpl = useServerFn(deleteTemplate);
   const preparePublish = useServerFn(prepareTemplatePublish);
   const uploadRendered = useServerFn(publishRenderedTemplate);
+  const uploadRenderedVideo = useServerFn(publishRenderedVideoTemplate);
   const fetchPublishStatus = useServerFn(listTemplatesWithPublishStatus);
 
   const itemsQ = useQuery({ queryKey: ["square-items"], queryFn: () => fetchItems() });
@@ -78,6 +80,10 @@ function TemplatesPage() {
   async function publishTemplateInBrowser(templateId: string) {
     const prep = await preparePublish({ data: { templateId } });
     if (!prep?.canvasJson) throw new Error("Template has no canvas data");
+
+    if (canvasJsonHasVideo(prep.canvasJson)) {
+      return await recordTemplateVideo(templateId, prep);
+    }
 
     const fabric = await import("fabric");
     const canvasEl = document.createElement("canvas");
@@ -123,6 +129,140 @@ function TemplatesPage() {
         },
       });
     } finally {
+      staticCanvas.dispose();
+    }
+  }
+
+  // ====== Video recording flow ======
+  async function recordTemplateVideo(
+    templateId: string,
+    prep: { width: number; height: number; canvasJson: any },
+  ) {
+    const fabric = await import("fabric");
+    const canvasEl = document.createElement("canvas");
+    canvasEl.width = prep.width;
+    canvasEl.height = prep.height;
+    const staticCanvas = new fabric.StaticCanvas(canvasEl, {
+      width: prep.width,
+      height: prep.height,
+      enableRetinaScaling: false,
+      backgroundColor:
+        (prep.canvasJson as { background?: string }).background ?? "#ffffff",
+      renderOnAddRemove: false,
+    });
+
+    const videos: HTMLVideoElement[] = [];
+    let rafId: number | null = null;
+    let recorder: MediaRecorder | null = null;
+
+    try {
+      await staticCanvas.loadFromJSON(prep.canvasJson);
+      const objs = staticCanvas.getObjects();
+      if (objs.length === 0) throw new Error("Fabric loaded 0 objects");
+
+      // For every object that originated from a video, swap its FabricImage
+      // backing element to an HTMLVideoElement that plays the signed URL.
+      const jsonObjs = (prep.canvasJson.objects ?? []) as any[];
+      for (let i = 0; i < jsonObjs.length; i++) {
+        const j = jsonObjs[i];
+        const videoSrc: string | undefined = j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
+        if (!videoSrc) continue;
+        const fabricObj = objs[i];
+        if (!(fabricObj instanceof fabric.FabricImage)) continue;
+
+        const v = document.createElement("video");
+        v.crossOrigin = "anonymous";
+        v.muted = true;
+        v.playsInline = true;
+        v.loop = false;
+        v.preload = "auto";
+        v.src = videoSrc;
+        await new Promise<void>((resolve, reject) => {
+          v.onloadeddata = () => resolve();
+          v.onerror = () => reject(new Error(`Failed to load video: ${videoSrc}`));
+        });
+        // Replace the element backing the Fabric image with the video.
+        (fabricObj as any).setElement(v);
+        (fabricObj as any).objectCaching = false;
+        videos.push(v);
+      }
+
+      if (videos.length === 0) throw new Error("No playable videos found on canvas");
+
+      // RAF loop: keep re-rendering so videos animate.
+      const tick = () => {
+        staticCanvas.renderAll();
+        rafId = requestAnimationFrame(tick);
+      };
+      staticCanvas.renderAll();
+      rafId = requestAnimationFrame(tick);
+
+      // Pick a supported recorder mimeType, MP4 preferred.
+      const candidates = [
+        "video/mp4;codecs=avc1",
+        "video/mp4",
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm",
+      ];
+      const recorderMime = candidates.find((m) =>
+        typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
+      );
+      if (!recorderMime) throw new Error("Browser does not support MediaRecorder for video output");
+
+      const stream = (canvasEl as HTMLCanvasElement).captureStream(30);
+      recorder = new MediaRecorder(stream, { mimeType: recorderMime, videoBitsPerSecond: 5_000_000 });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+
+      const recordingDone = new Promise<Blob>((resolve, reject) => {
+        recorder!.onstop = () => {
+          const outMime = recorderMime.startsWith("video/mp4") ? "video/mp4" : "video/webm";
+          resolve(new Blob(chunks, { type: outMime }));
+        };
+        recorder!.onerror = (e) => reject(new Error(`MediaRecorder error: ${String((e as any).error?.message || e)}`));
+      });
+
+      // Cap at 30s; stop when the longest video ends.
+      const maxDur = Math.min(
+        30,
+        videos.reduce((m, v) => Math.max(m, Number.isFinite(v.duration) ? v.duration : 0), 0) || 10,
+      );
+      const stopTimer = window.setTimeout(() => {
+        try { recorder?.state === "recording" && recorder.stop(); } catch {}
+      }, Math.ceil(maxDur * 1000) + 250);
+      let endedCount = 0;
+      videos.forEach((v) => {
+        v.onended = () => {
+          endedCount++;
+          if (endedCount === videos.length) {
+            window.clearTimeout(stopTimer);
+            try { recorder?.state === "recording" && recorder.stop(); } catch {}
+          }
+        };
+      });
+
+      recorder.start(250);
+      await Promise.all(videos.map((v) => v.play()));
+
+      const blob = await recordingDone;
+      const mimeOut: "video/mp4" | "video/webm" = recorderMime.startsWith("video/mp4")
+        ? "video/mp4"
+        : "video/webm";
+      const base64 = await blobToBase64(blob);
+      return await uploadRenderedVideo({
+        data: {
+          templateId,
+          videoBase64: base64,
+          mimeType: mimeOut,
+          width: prep.width,
+          height: prep.height,
+          durationMs: Math.round(maxDur * 1000),
+        },
+      });
+    } finally {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      videos.forEach((v) => { try { v.pause(); v.src = ""; v.load(); } catch {} });
       staticCanvas.dispose();
     }
   }
