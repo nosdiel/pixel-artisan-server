@@ -31,7 +31,7 @@ const PRESET_SIZES: Record<string, { w: number; h: number }> = {
   "1080x1080": { w: 1080, h: 1080 },
 };
 
-const REQUIRED_RENDERER_VERSION = "2026-05-16-fabric7-page-render-state";
+const REQUIRED_RENDERER_VERSION = "2026-05-16-fabric7-node";
 
 function extractImageStoragePath(src: string) {
   try {
