@@ -106,6 +106,48 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
   return { canvasJson: json, refreshedImages, inlinedImageBytes };
 }
 
+/**
+ * Some saved templates have an Image object stored with stale scaleX/scaleY
+ * (e.g. the editor scaled a thumbnail to fit the canvas, then the src was
+ * swapped for a full-res copy without resetting the scale). Result: the image
+ * renders at 2x+ the canvas size and the canvas only shows the cropped center.
+ *
+ * For each Image, compare the displayed bounds against the canvas. If the
+ * image's natural size already fits the canvas (within 1px) AND the stored
+ * scale would blow it up beyond the canvas, force scale=1 at (0, 0). This
+ * leaves intentionally-cropped images alone but fixes the common bug where
+ * the base image overflows the canvas.
+ */
+function normalizeOversizedBaseImages(canvasJson: any, canvasW: number, canvasH: number) {
+  let fixed = 0;
+  const visit = (obj: any) => {
+    if (!obj || typeof obj !== "object") return;
+    if (obj.type === "Image" || obj.type === "image") {
+      const naturalW = Number(obj.width) || 0;
+      const naturalH = Number(obj.height) || 0;
+      const sx = Number(obj.scaleX) || 1;
+      const sy = Number(obj.scaleY) || 1;
+      const displayedW = naturalW * sx;
+      const displayedH = naturalH * sy;
+      const naturalFitsCanvas =
+        Math.abs(naturalW - canvasW) <= 1 && Math.abs(naturalH - canvasH) <= 1;
+      const overflowsCanvas = displayedW > canvasW * 1.05 || displayedH > canvasH * 1.05;
+      if (naturalFitsCanvas && overflowsCanvas) {
+        obj.scaleX = 1;
+        obj.scaleY = 1;
+        obj.left = 0;
+        obj.top = 0;
+        fixed++;
+      }
+    }
+    for (const child of (obj.objects ?? obj._objects ?? []) as any[]) visit(child);
+    if (obj.clipPath) visit(obj.clipPath);
+  };
+  for (const o of (canvasJson.objects ?? []) as any[]) visit(o);
+  if (canvasJson.backgroundImage) visit(canvasJson.backgroundImage);
+  return fixed;
+}
+
 export async function checkRendererHealth(rendererUrl: string, rendererAuthToken: string | null): Promise<RendererHealthResponse> {
   const url = rendererUrl.replace(/\/+$/, "") + "/health";
   const rawToken = rendererAuthToken?.trim().replace(/^Bearer\s+/i, "") ?? "";
