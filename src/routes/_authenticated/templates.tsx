@@ -77,6 +77,149 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+const VIDEO_RECORDING_FPS = 30;
+const VIDEO_RECORDING_MIN_SECONDS = 10;
+const VIDEO_RECORDING_MAX_SECONDS = 30;
+const VIDEO_RECORDING_BITRATE = 5_000_000;
+
+function pickRecorderMimeType() {
+  const candidates = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+    "video/mp4;codecs=avc1",
+    "video/mp4",
+  ];
+  return candidates.find((m) =>
+    typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
+  );
+}
+
+function waitForAnimationFrames(count: number) {
+  return new Promise<void>((resolve) => {
+    const step = (remaining: number) => {
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(() => step(remaining - 1));
+    };
+    step(count);
+  });
+}
+
+function waitForVideoCanPlay(video: HTMLVideoElement, label: string, timeoutMs = 15_000) {
+  return new Promise<void>((resolve, reject) => {
+    let timeoutId: number | null = null;
+    const cleanup = () => {
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      video.removeEventListener("loadeddata", check);
+      video.removeEventListener("canplay", check);
+      video.removeEventListener("error", onError);
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(`Failed to load video for publishing: ${label}`));
+    };
+    const check = () => {
+      if (video.readyState >= 3) {
+        cleanup();
+        resolve();
+      }
+    };
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for video to become playable: ${label}`));
+    }, timeoutMs);
+    video.addEventListener("loadeddata", check);
+    video.addEventListener("canplay", check);
+    video.addEventListener("error", onError);
+    video.load();
+    check();
+  });
+}
+
+async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: number) {
+  if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
+
+  const resolved = await new Promise<number>((resolve) => {
+    let timeoutId: number | null = null;
+    const cleanup = () => {
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      video.removeEventListener("durationchange", done);
+      video.removeEventListener("seeked", done);
+      video.removeEventListener("error", done);
+    };
+    const done = () => {
+      const duration = Number.isFinite(video.duration) && video.duration > 0
+        ? video.duration
+        : fallbackSeconds;
+      cleanup();
+      resolve(duration);
+    };
+    video.addEventListener("durationchange", done);
+    video.addEventListener("seeked", done);
+    video.addEventListener("error", done);
+    timeoutId = window.setTimeout(done, 2_000);
+    try { video.currentTime = 1e9; } catch { done(); }
+  });
+
+  try { video.currentTime = 0; } catch {}
+  return resolved;
+}
+
+async function verifyRecordedVideoBlob(blob: Blob, expectedSeconds: number) {
+  const minBytes = Math.max(600_000, Math.round(expectedSeconds * 60_000));
+  if (blob.size < minBytes) {
+    throw new Error(
+      `Recorded video is too small (${Math.round(blob.size / 1024)} KB). Refusing to upload an invalid render.`,
+    );
+  }
+
+  const previewUrl = URL.createObjectURL(blob);
+  const preview = document.createElement("video");
+  preview.src = previewUrl;
+  preview.muted = true;
+  preview.playsInline = true;
+  preview.preload = "auto";
+  preview.style.position = "fixed";
+  preview.style.left = "-9999px";
+  preview.style.top = "0";
+  preview.style.width = "1px";
+  preview.style.height = "1px";
+  preview.style.opacity = "0";
+  preview.style.pointerEvents = "none";
+  document.body.appendChild(preview);
+
+  try {
+    console.info("Local recorded video preview", { previewUrl, size: blob.size, type: blob.type });
+    await waitForVideoCanPlay(preview, "local recorded preview");
+    const durationSeconds = await resolveVideoDuration(preview, expectedSeconds);
+    const minValidDuration = Math.max(VIDEO_RECORDING_MIN_SECONDS - 0.75, expectedSeconds * 0.85);
+    if (!Number.isFinite(durationSeconds) || durationSeconds < minValidDuration) {
+      throw new Error(
+        `Recorded video duration is invalid (${durationSeconds.toFixed(2)}s). Refusing to upload.`,
+      );
+    }
+
+    preview.currentTime = 0;
+    await preview.play();
+    await new Promise<void>((resolve, reject) => {
+      const startedAt = performance.now();
+      const targetTime = Math.min(1, durationSeconds / 4);
+      const check = () => {
+        if (!preview.paused && preview.currentTime >= targetTime) resolve();
+        else if (performance.now() - startedAt > 5_000) reject(new Error("Recorded preview did not play locally. Refusing to upload."));
+        else requestAnimationFrame(check);
+      };
+      requestAnimationFrame(check);
+    });
+
+    return { durationSeconds, previewUrl };
+  } finally {
+    try { preview.pause(); } catch {}
+    preview.remove();
+    window.setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000);
+  }
+}
+
 function TemplatesPage() {
   const qc = useQueryClient();
   const fetchItems = useServerFn(listSquareItems);
@@ -196,51 +339,39 @@ function TemplatesPage() {
 
       // For every object that originated from a video, swap its FabricImage
       // backing element to an HTMLVideoElement that plays the signed URL.
-      const jsonObjs = (prep.canvasJson.objects ?? []) as any[];
-      for (let i = 0; i < jsonObjs.length; i++) {
-        const j = jsonObjs[i];
-        const videoSrc: string | undefined = j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
-        if (!videoSrc) continue;
-        const fabricObj = objs[i];
-        if (!(fabricObj instanceof fabric.FabricImage)) continue;
+      const attachVideos = async (jsonList: any[], fabricList: any[]) => {
+        for (let i = 0; i < jsonList.length; i++) {
+          const j = jsonList[i];
+          const fabricObj = fabricList[i];
+          const videoSrc: string | undefined = j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
 
-        const v = document.createElement("video");
-        v.crossOrigin = "anonymous";
-        v.muted = true;
-        v.playsInline = true;
-        v.loop = false;
-        v.preload = "auto";
-        v.src = videoSrc;
-        await new Promise<void>((resolve, reject) => {
-          v.onloadeddata = () => resolve();
-          v.onerror = () => reject(new Error(`Failed to load video: ${videoSrc}`));
-        });
-        // Replace the element backing the Fabric image with the video.
-        (fabricObj as any).setElement(v);
-        (fabricObj as any).objectCaching = false;
-        videos.push(v);
-      }
+          if (videoSrc && fabricObj instanceof fabric.FabricImage) {
+            const v = document.createElement("video");
+            v.crossOrigin = "anonymous";
+            v.muted = true;
+            v.playsInline = true;
+            v.loop = true;
+            v.preload = "auto";
+            v.src = videoSrc;
+            await waitForVideoCanPlay(v, videoSrc);
+            (fabricObj as any).setElement(v);
+            (fabricObj as any).objectCaching = false;
+            videos.push(v);
+          }
+
+          const childJson = (j?.objects ?? j?._objects ?? []) as any[];
+          const childFabric = typeof fabricObj?.getObjects === "function" ? fabricObj.getObjects() : [];
+          if (childJson.length && childFabric.length) await attachVideos(childJson, childFabric);
+        }
+      };
+
+      await attachVideos((prep.canvasJson.objects ?? []) as any[], objs as any[]);
 
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
 
-      // Resolve a reliable duration. Some MP4s report Infinity until you seek
-      // to the end; do that dance so we always get a finite seconds value.
-      async function resolveDuration(v: HTMLVideoElement): Promise<number> {
-        if (Number.isFinite(v.duration) && v.duration > 0) return v.duration;
-        return await new Promise<number>((resolve) => {
-          const onSeeked = () => {
-            v.removeEventListener("seeked", onSeeked);
-            const d = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 5;
-            try { v.currentTime = 0; } catch {}
-            resolve(d);
-          };
-          v.addEventListener("seeked", onSeeked);
-          try { v.currentTime = 1e9; } catch { resolve(5); }
-        });
-      }
-      const durations = await Promise.all(videos.map(resolveDuration));
-      const longest = Math.max(...durations, 1);
-      const maxDur = Math.min(30, longest);
+      const durations = await Promise.all(videos.map((v) => resolveVideoDuration(v, VIDEO_RECORDING_MIN_SECONDS)));
+      const longest = Math.max(...durations, VIDEO_RECORDING_MIN_SECONDS);
+      const maxDur = Math.min(VIDEO_RECORDING_MAX_SECONDS, Math.max(VIDEO_RECORDING_MIN_SECONDS, longest));
 
       // RAF loop: keep re-rendering so videos animate. Draw at least one
       // frame before recording starts so the captureStream has real content.
@@ -251,28 +382,19 @@ function TemplatesPage() {
       staticCanvas.renderAll();
       rafId = requestAnimationFrame(tick);
 
-      // Pick a supported recorder mimeType, MP4 preferred.
-      const candidates = [
-        "video/mp4;codecs=avc1",
-        "video/mp4",
-        "video/webm;codecs=vp9",
-        "video/webm;codecs=vp8",
-        "video/webm",
-      ];
-      const recorderMime = candidates.find((m) =>
-        typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
-      );
+      const recorderMime = pickRecorderMimeType();
       if (!recorderMime) throw new Error("Browser does not support MediaRecorder for video output");
 
-      const stream = (canvasEl as HTMLCanvasElement).captureStream(30);
-      recorder = new MediaRecorder(stream, { mimeType: recorderMime, videoBitsPerSecond: 5_000_000 });
+      const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
+      recorder = new MediaRecorder(stream, { mimeType: recorderMime, videoBitsPerSecond: VIDEO_RECORDING_BITRATE });
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
 
       const recordingDone = new Promise<Blob>((resolve, reject) => {
         recorder!.onstop = () => {
           const outMime = recorderMime.startsWith("video/mp4") ? "video/mp4" : "video/webm";
-          resolve(new Blob(chunks, { type: outMime }));
+          if (chunks.length === 0) reject(new Error("MediaRecorder produced no video chunks"));
+          else resolve(new Blob(chunks, { type: outMime }));
         };
         recorder!.onerror = (e) => reject(new Error(`MediaRecorder error: ${String((e as any).error?.message || e)}`));
       });
@@ -280,10 +402,12 @@ function TemplatesPage() {
       // Start playback FIRST so the stream has frames, then start recording.
       // Loop videos so even a 1s clip records the full window without ending
       // the stream prematurely. We stop strictly via wall-clock timer.
-      videos.forEach((v) => { v.loop = true; v.currentTime = 0; });
+      videos.forEach((v) => { v.loop = true; try { v.currentTime = 0; } catch {} });
+      await Promise.all(videos.map((v) => waitForVideoCanPlay(v, v.currentSrc || v.src)));
       await Promise.all(videos.map((v) => v.play()));
       // Give the canvas a couple of frames before opening the recorder.
-      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      await waitForAnimationFrames(3);
+      staticCanvas.renderAll();
       recorder.start(250);
       window.setTimeout(() => {
         try { recorder?.state === "recording" && recorder.stop(); } catch {}
@@ -293,6 +417,8 @@ function TemplatesPage() {
       const mimeOut: "video/mp4" | "video/webm" = recorderMime.startsWith("video/mp4")
         ? "video/mp4"
         : "video/webm";
+      const verified = await verifyRecordedVideoBlob(blob, maxDur);
+      toast.success(`Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(blob.size / 1024)} KB)`);
       const base64 = await blobToBase64(blob);
       return await uploadRenderedVideo({
         data: {
@@ -301,11 +427,12 @@ function TemplatesPage() {
           mimeType: mimeOut,
           width: prep.width,
           height: prep.height,
-          durationMs: Math.round(maxDur * 1000),
+          durationMs: Math.round(verified.durationSeconds * 1000),
         },
       });
     } finally {
       if (rafId != null) cancelAnimationFrame(rafId);
+      try { recorder?.state === "recording" && recorder.stop(); } catch {}
       videos.forEach((v) => { try { v.pause(); v.src = ""; v.load(); } catch {} });
       staticCanvas.dispose();
     }
