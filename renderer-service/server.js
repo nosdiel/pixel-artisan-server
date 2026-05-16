@@ -19,12 +19,24 @@
 const express = require("express");
 const admin = require("firebase-admin");
 const puppeteer = require("puppeteer");
+const fs = require("fs");
+const path = require("path");
 
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
 const CHROME_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH || "/usr/bin/google-chrome";
-const RENDERER_VERSION = "2026-05-16-inline-fabric-fallback";
+const RENDERER_VERSION = "2026-05-16-local-fabric-timeouts";
+
+// Load Fabric.js from node_modules so we don't depend on a CDN at render time.
+let FABRIC_SOURCE = "";
+try {
+  const fabricPath = require.resolve("fabric/dist/index.min.js");
+  FABRIC_SOURCE = fs.readFileSync(fabricPath, "utf8");
+  console.log(`Loaded local Fabric.js (${FABRIC_SOURCE.length} bytes) from ${fabricPath}`);
+} catch (err) {
+  console.warn("Could not load local Fabric.js, will fall back to CDN:", err.message);
+}
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
@@ -51,6 +63,7 @@ function getBrowser() {
     browserPromise = puppeteer.launch({
       headless: "new",
       executablePath: CHROME_EXECUTABLE_PATH,
+      protocolTimeout: 180000,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     });
   }
