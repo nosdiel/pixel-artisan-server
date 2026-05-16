@@ -20,22 +20,22 @@ const express = require("express");
 const admin = require("firebase-admin");
 const puppeteer = require("puppeteer");
 const fs = require("fs");
-const path = require("path");
 
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
 const CHROME_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH || "/usr/bin/google-chrome";
-const RENDERER_VERSION = "2026-05-16-local-fabric-timeouts";
+const RENDERER_VERSION = "2026-05-16-fabric7-blank-guard";
 
 // Load Fabric.js from node_modules so we don't depend on a CDN at render time.
 let FABRIC_SOURCE = "";
 try {
-  const fabricPath = require.resolve("fabric/dist/index.min.js");
+  const fabricPath = require.resolve("fabric");
   FABRIC_SOURCE = fs.readFileSync(fabricPath, "utf8");
   console.log(`Loaded local Fabric.js (${FABRIC_SOURCE.length} bytes) from ${fabricPath}`);
 } catch (err) {
-  console.warn("Could not load local Fabric.js, will fall back to CDN:", err.message);
+  console.error("Could not load local Fabric.js:", err.message);
+  process.exit(1);
 }
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
