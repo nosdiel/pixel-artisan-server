@@ -22,6 +22,15 @@ export type RendererHealthResponse = {
   body: string;
 };
 
+const PRESET_SIZES: Record<string, { w: number; h: number }> = {
+  "1920x1080": { w: 1920, h: 1080 },
+  "3840x2160": { w: 3840, h: 2160 },
+  "1080x1920": { w: 1080, h: 1920 },
+  "2160x3840": { w: 2160, h: 3840 },
+  "1280x720": { w: 1280, h: 720 },
+  "1080x1080": { w: 1080, h: 1080 },
+};
+
 function extractImageStoragePath(src: string) {
   try {
     const url = new URL(src);
