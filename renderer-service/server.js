@@ -1,42 +1,17 @@
 /**
- * Signage renderer service.
+ * Signage renderer service (Node-side Fabric).
  *
- * Receives template payloads from the Lovable app, renders them to PNG using
- * a headless browser + Fabric.js, uploads the PNG to Firebase Storage, and
- * writes/updates a Firestore document with the public download URL.
- *
- * Endpoints:
- *   GET  /health        — liveness probe
- *   POST /render        — render + upload + Firestore update
- *
- * Env vars:
- *   PORT                          — defaults to 8080
- *   AUTH_TOKEN                    — optional shared secret. If set, requests must
- *                                   send `Authorization: Bearer <AUTH_TOKEN>`.
- *   FIREBASE_SERVICE_ACCOUNT_JSON — full Firebase service account JSON (single line).
- *   FIREBASE_STORAGE_BUCKET       — e.g. my-project.appspot.com
+ * Renders template payloads to PNG using fabric/node (node-canvas backend),
+ * uploads to Firebase Storage, and updates Firestore. No Puppeteer / no CDN.
  */
 const express = require("express");
 const admin = require("firebase-admin");
-const puppeteer = require("puppeteer");
-const fs = require("fs");
+const fabric = require("fabric/node");
 
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
-const CHROME_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH || "/usr/bin/google-chrome";
-const RENDERER_VERSION = "2026-05-16-fabric7-page-render-state";
-
-// Load Fabric.js from node_modules so we don't depend on a CDN at render time.
-let FABRIC_SOURCE = "";
-try {
-  const fabricPath = require.resolve("fabric");
-  FABRIC_SOURCE = fs.readFileSync(fabricPath, "utf8");
-  console.log(`Loaded local Fabric.js (${FABRIC_SOURCE.length} bytes) from ${fabricPath}`);
-} catch (err) {
-  console.error("Could not load local Fabric.js:", err.message);
-  process.exit(1);
-}
+const RENDERER_VERSION = "2026-05-16-fabric7-node";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
@@ -56,20 +31,6 @@ admin.initializeApp({
 const bucket = admin.storage().bucket();
 const firestore = admin.firestore();
 
-// Reuse a single browser process across requests
-let browserPromise = null;
-function getBrowser() {
-  if (!browserPromise) {
-    browserPromise = puppeteer.launch({
-      headless: "new",
-      executablePath: CHROME_EXECUTABLE_PATH,
-      protocolTimeout: 180000,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-    });
-  }
-  return browserPromise;
-}
-
 function authMiddleware(req, res, next) {
   if (!AUTH_TOKEN) return next();
   const header = req.headers.authorization || "";
@@ -85,42 +46,14 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, rendererVersion: RENDERER_VERSION, bucket: BUCKET_NAME, time: new Date().toISOString() });
 });
 
-function mimeForUrl(url, fallback = "image/png") {
-  const clean = String(url || "").split("?")[0].toLowerCase();
-  if (clean.endsWith(".jpg") || clean.endsWith(".jpeg")) return "image/jpeg";
-  if (clean.endsWith(".webp")) return "image/webp";
-  if (clean.endsWith(".gif")) return "image/gif";
-  if (clean.endsWith(".svg")) return "image/svg+xml";
-  return fallback;
-}
-
-async function inlineCanvasImages(canvasJson) {
-  const json = JSON.parse(JSON.stringify(canvasJson));
-  let inlinedImages = 0;
-  let inlinedBytes = 0;
-
-  const inlineObject = async (obj) => {
-    if (!obj || typeof obj !== "object") return;
-    const src = typeof obj.src === "string" ? obj.src : "";
-    const isRemoteImage = /^https?:\/\//i.test(src) && !/\.(mp4|mov|m4v|webm|ogg|ogv)(?:$|[?#])/i.test(src);
-    if (isRemoteImage) {
-      const response = await fetch(src, { redirect: "follow" });
-      if (!response.ok) throw new Error(`Could not fetch image layer (${response.status}): ${src.slice(0, 160)}`);
-      const contentType = response.headers.get("content-type") || mimeForUrl(src);
-      if (!contentType.startsWith("image/")) throw new Error(`Image layer returned ${contentType}: ${src.slice(0, 160)}`);
-      const bytes = Buffer.from(await response.arrayBuffer());
-      obj.src = `data:${contentType};base64,${bytes.toString("base64")}`;
-      obj.crossOrigin = "anonymous";
-      inlinedImages += 1;
-      inlinedBytes += bytes.length;
-    }
-    await Promise.all((obj.objects || obj._objects || []).map(inlineObject));
-    if (obj.clipPath) await inlineObject(obj.clipPath);
-  };
-
-  await Promise.all((json.objects || []).map(inlineObject));
-  if (json.backgroundImage) await inlineObject(json.backgroundImage);
-  return { canvasJson: json, inlinedImages, inlinedBytes };
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
 }
 
 app.post("/render", authMiddleware, async (req, res) => {
@@ -136,7 +69,6 @@ app.post("/render", authMiddleware, async (req, res) => {
   if (!templateId || !companyId || !canvasJson || !width || !height) {
     return res.status(400).json({ success: false, error: "Missing required fields" });
   }
-
   const objectCount = Array.isArray(canvasJson.objects) ? canvasJson.objects.length : 0;
   if (objectCount === 0) {
     return res.status(400).json({ success: false, error: "Template has no objects" });
@@ -151,13 +83,7 @@ app.post("/render", authMiddleware, async (req, res) => {
       { merge: true },
     );
 
-    const inlined = await inlineCanvasImages(canvasJson);
-    console.log("[/render] image sources prepared", {
-      templateId,
-      inlinedImages: inlined.inlinedImages,
-      inlinedBytes: inlined.inlinedBytes,
-    });
-    const png = await renderPng({ width, height, canvasJson: inlined.canvasJson });
+    const png = await renderPng({ width, height, canvasJson });
 
     const ts = startedAt.toISOString().replace(/[:.]/g, "-");
     const latestPath = `rendered/${companyId}/${templateId}/latest.png`;
@@ -195,165 +121,60 @@ app.post("/render", authMiddleware, async (req, res) => {
 });
 
 async function renderPng({ width, height, canvasJson }) {
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-  try {
-    page.setDefaultTimeout(180000);
-    page.setDefaultNavigationTimeout(180000);
-    page.on("console", (msg) => console.log("[renderer-page]", msg.text()));
-    page.on("pageerror", (err) => console.error("[renderer-page-error]", err));
-    page.on("requestfailed", (req) => {
-      if (req.resourceType() === "image" || req.resourceType() === "font") {
-        console.error("[renderer-request-failed]", req.resourceType(), req.url(), req.failure()?.errorText);
-      }
-    });
-    await page.setViewport({ width, height, deviceScaleFactor: 1 });
-    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-      html,body{margin:0;padding:0;background:transparent}
-      canvas{display:block}
-    </style>
-    </head><body>
-    <canvas id="c" width="${width}" height="${height}"></canvas>
-    </body></html>`;
-    await page.setContent(html, { waitUntil: "load" });
-    await page.addScriptTag({ content: FABRIC_SOURCE });
+  const StaticCanvas = fabric.StaticCanvas;
+  const canvas = new StaticCanvas(null, {
+    width,
+    height,
+    enableRetinaScaling: false,
+    backgroundColor: canvasJson.background || "#ffffff",
+    renderOnAddRemove: false,
+  });
 
-    await page.evaluate((json, renderWidth, renderHeight) => {
-      window.__renderState = { status: "running", startedAt: Date.now() };
+  console.log("[renderPng] loading JSON", { objects: canvasJson.objects?.length });
+  await withTimeout(canvas.loadFromJSON(canvasJson), 120000, "Timed out loading Fabric JSON");
 
-      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      const withTimeout = (promise, ms, message) => new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(message)), ms);
-        Promise.resolve(promise)
-          .then((value) => {
-            clearTimeout(timer);
-            resolve(value);
-          })
-          .catch((error) => {
-            clearTimeout(timer);
-            reject(error);
-          });
-      });
+  const allObjects = canvas.getObjects();
+  if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
 
-      const waitForImageObject = (obj, index) => {
-        const el = typeof obj.getElement === "function" ? obj.getElement() : null;
-        if (!el || el.tagName !== "IMG") return Promise.resolve();
-        if (el.complete && el.naturalWidth && el.naturalHeight) return Promise.resolve();
-
-        const src = typeof obj.getSrc === "function" ? obj.getSrc() : obj.src;
-        return withTimeout(
-          new Promise((resolve, reject) => {
-            el.onload = () => resolve();
-            el.onerror = () => reject(new Error(`Image layer ${index + 1} failed to load: ${String(src || "unknown").slice(0, 160)}`));
-          }),
-          15000,
-          `Image layer ${index + 1} timed out: ${String(src || "unknown").slice(0, 160)}`,
-        );
-      };
-
-      void (async () => {
-        const fabric = window.fabric;
-        if (!fabric) throw new Error("Fabric.js failed to load");
-        if (!Array.isArray(json?.objects) || json.objects.length === 0) throw new Error("Template has no objects");
-
-        const CanvasClass = fabric.StaticCanvas || fabric.Canvas;
-        const canvas = new CanvasClass("c", {
-          width: renderWidth,
-          height: renderHeight,
-          enableRetinaScaling: false,
-          backgroundColor: json.background || "#ffffff",
-          renderOnAddRemove: false,
-        });
-
-        await withTimeout(canvas.loadFromJSON(json), 120000, "Timed out loading Fabric JSON");
-
-        const allObjects = canvas.getObjects();
-        if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
-
-        const imageObjects = allObjects.filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
-        await Promise.all(imageObjects.map(waitForImageObject));
-
-        if (document.fonts?.ready) {
-          await withTimeout(document.fonts.ready, 15000, "Timed out waiting for fonts");
-        }
-
-        const visibleObjects = allObjects.filter((obj) => obj.visible !== false && (obj.opacity ?? 1) > 0);
-        const visibleOnCanvas = visibleObjects.filter((obj) => {
-          const bounds = obj.getBoundingRect ? obj.getBoundingRect() : obj;
-          return bounds.left < renderWidth && bounds.top < renderHeight && bounds.left + bounds.width > 0 && bounds.top + bounds.height > 0;
-        });
-        if (visibleOnCanvas.length === 0) {
-          throw new Error("Fabric loaded objects, but none are visible within the render canvas");
-        }
-
-        canvas.renderAll();
-        await wait(500);
-        canvas.renderAll();
-
-        const ctx = canvas.lowerCanvasEl.getContext("2d", { willReadFrequently: true });
-        const pixels = ctx.getImageData(0, 0, renderWidth, renderHeight).data;
-        let nonWhitePixels = 0;
-        let paintedPixels = 0;
-        for (let i = 0; i < pixels.length; i += 4) {
-          const alpha = pixels[i + 3];
-          if (alpha > 5) {
-            paintedPixels += 1;
-            if (pixels[i] < 250 || pixels[i + 1] < 250 || pixels[i + 2] < 250) nonWhitePixels += 1;
-          }
-        }
-        const nonWhiteRatio = paintedPixels ? nonWhitePixels / paintedPixels : 0;
-        if (!paintedPixels || nonWhiteRatio < 0.0005) {
-          throw new Error(`Rendered PNG is blank white (nonWhiteRatio=${nonWhiteRatio.toFixed(6)}, objects=${allObjects.length})`);
-        }
-
-        window.__renderState = {
-          status: "done",
-          result: {
-            loadedCount: allObjects.length,
-            visibleOnCanvasCount: visibleOnCanvas.length,
-            imageObjectCount: imageObjects.length,
-            nonWhiteRatio,
-            dataUrl: canvas.toDataURL({ format: "png", multiplier: 1 }),
-            objectSummary: allObjects.map((obj) => ({
-              type: obj.type,
-              left: obj.left,
-              top: obj.top,
-              width: obj.width,
-              height: obj.height,
-              scaleX: obj.scaleX,
-              scaleY: obj.scaleY,
-              visible: obj.visible,
-            })),
-          },
-        };
-      })().catch((error) => {
-        window.__renderState = {
-          status: "error",
-          error: error?.stack || error?.message || String(error),
-        };
-      });
-    }, canvasJson, width, height);
-
-    await page.waitForFunction(
-      () => window.__renderState?.status === "done" || window.__renderState?.status === "error",
-      { timeout: 180000, polling: 250 },
-    );
-    const renderState = await page.evaluate(() => window.__renderState);
-    if (renderState?.status === "error") throw new Error(renderState.error || "Renderer page failed");
-    const renderInfo = renderState?.result;
-    if (!renderInfo?.dataUrl) throw new Error("Renderer page finished without PNG data");
-    console.log("[/render] fabric canvas ready", {
-      loadedCount: renderInfo.loadedCount,
-      visibleOnCanvasCount: renderInfo.visibleOnCanvasCount,
-      nonWhiteRatio: renderInfo.nonWhiteRatio,
-      objectSummary: renderInfo.objectSummary,
-      dataUrlBytes: renderInfo.dataUrl.length,
-    });
-
-    return Buffer.from(renderInfo.dataUrl.split(",")[1], "base64");
-  } finally {
-    await page.close().catch(() => {});
+  const visibleOnCanvas = allObjects.filter((obj) => {
+    if (obj.visible === false || (obj.opacity ?? 1) <= 0) return false;
+    const b = obj.getBoundingRect ? obj.getBoundingRect() : { left: obj.left, top: obj.top, width: obj.width, height: obj.height };
+    return b.left < width && b.top < height && b.left + b.width > 0 && b.top + b.height > 0;
+  });
+  if (visibleOnCanvas.length === 0) {
+    throw new Error("Fabric loaded objects, but none are visible within the render canvas");
   }
+
+  canvas.renderAll();
+  await new Promise((r) => setTimeout(r, 250));
+  canvas.renderAll();
+
+  // Blank-pixel guard
+  const ctx = canvas.getContext();
+  const pixels = ctx.getImageData(0, 0, width, height).data;
+  let nonWhite = 0;
+  let painted = 0;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const a = pixels[i + 3];
+    if (a > 5) {
+      painted += 1;
+      if (pixels[i] < 250 || pixels[i + 1] < 250 || pixels[i + 2] < 250) nonWhite += 1;
+    }
+  }
+  const nonWhiteRatio = painted ? nonWhite / painted : 0;
+  if (!painted || nonWhiteRatio < 0.0005) {
+    throw new Error(`Rendered PNG is blank (nonWhiteRatio=${nonWhiteRatio.toFixed(6)}, objects=${allObjects.length})`);
+  }
+
+  console.log("[renderPng] ready", {
+    objects: allObjects.length,
+    visibleOnCanvas: visibleOnCanvas.length,
+    nonWhiteRatio,
+  });
+
+  // node-canvas exposes toBuffer on the underlying canvas element
+  const lower = canvas.lowerCanvasEl || canvas.getElement();
+  return lower.toBuffer("image/png");
 }
 
 async function uploadPng(buffer, path) {
@@ -363,8 +184,6 @@ async function uploadPng(buffer, path) {
     resumable: false,
     metadata: { cacheControl: "public, max-age=60" },
   });
-  // Long-lived signed URL (7 days max for v4 signing). For permanent URLs make
-  // the file public or generate Firebase download tokens.
   const [url] = await file.getSignedUrl({
     action: "read",
     expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
@@ -373,5 +192,5 @@ async function uploadPng(buffer, path) {
 }
 
 app.listen(PORT, () => {
-  console.log(`Signage renderer listening on :${PORT} (bucket: ${BUCKET_NAME})`);
+  console.log(`Signage renderer v${RENDERER_VERSION} listening on :${PORT} (bucket: ${BUCKET_NAME})`);
 });
