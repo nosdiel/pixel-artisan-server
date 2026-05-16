@@ -356,9 +356,7 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
 
   if (!settings?.renderer_url) throw new Error("Renderer URL is not configured. Add it in Settings → Signage publishing.");
   if (!settings.company_id) throw new Error("Company ID is not configured. Add it in Settings → Signage publishing.");
-  // Note: previously we hard-gated on rendererVersion === REQUIRED_RENDERER_VERSION,
-  // but that blocks self-hosted renderers that haven't been redeployed yet.
-  // The blank-PNG check after rendering still catches a truly broken renderer.
+  await assertRendererIsCurrent(settings.renderer_url, settings.renderer_auth_token);
 
   const { data: tpl, error: tplErr } = await supabaseAdmin
     .from("templates")
