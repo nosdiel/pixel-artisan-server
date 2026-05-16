@@ -223,7 +223,27 @@ function TemplatesPage() {
 
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
 
-      // RAF loop: keep re-rendering so videos animate.
+      // Resolve a reliable duration. Some MP4s report Infinity until you seek
+      // to the end; do that dance so we always get a finite seconds value.
+      async function resolveDuration(v: HTMLVideoElement): Promise<number> {
+        if (Number.isFinite(v.duration) && v.duration > 0) return v.duration;
+        return await new Promise<number>((resolve) => {
+          const onSeeked = () => {
+            v.removeEventListener("seeked", onSeeked);
+            const d = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 5;
+            try { v.currentTime = 0; } catch {}
+            resolve(d);
+          };
+          v.addEventListener("seeked", onSeeked);
+          try { v.currentTime = 1e9; } catch { resolve(5); }
+        });
+      }
+      const durations = await Promise.all(videos.map(resolveDuration));
+      const longest = Math.max(...durations, 1);
+      const maxDur = Math.min(30, longest);
+
+      // RAF loop: keep re-rendering so videos animate. Draw at least one
+      // frame before recording starts so the captureStream has real content.
       const tick = () => {
         staticCanvas.renderAll();
         rafId = requestAnimationFrame(tick);
@@ -257,27 +277,17 @@ function TemplatesPage() {
         recorder!.onerror = (e) => reject(new Error(`MediaRecorder error: ${String((e as any).error?.message || e)}`));
       });
 
-      // Cap at 30s; stop when the longest video ends.
-      const maxDur = Math.min(
-        30,
-        videos.reduce((m, v) => Math.max(m, Number.isFinite(v.duration) ? v.duration : 0), 0) || 10,
-      );
-      const stopTimer = window.setTimeout(() => {
-        try { recorder?.state === "recording" && recorder.stop(); } catch {}
-      }, Math.ceil(maxDur * 1000) + 250);
-      let endedCount = 0;
-      videos.forEach((v) => {
-        v.onended = () => {
-          endedCount++;
-          if (endedCount === videos.length) {
-            window.clearTimeout(stopTimer);
-            try { recorder?.state === "recording" && recorder.stop(); } catch {}
-          }
-        };
-      });
-
-      recorder.start(250);
+      // Start playback FIRST so the stream has frames, then start recording.
+      // Loop videos so even a 1s clip records the full window without ending
+      // the stream prematurely. We stop strictly via wall-clock timer.
+      videos.forEach((v) => { v.loop = true; v.currentTime = 0; });
       await Promise.all(videos.map((v) => v.play()));
+      // Give the canvas a couple of frames before opening the recorder.
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      recorder.start(250);
+      window.setTimeout(() => {
+        try { recorder?.state === "recording" && recorder.stop(); } catch {}
+      }, Math.ceil(maxDur * 1000));
 
       const blob = await recordingDone;
       const mimeOut: "video/mp4" | "video/webm" = recorderMime.startsWith("video/mp4")
