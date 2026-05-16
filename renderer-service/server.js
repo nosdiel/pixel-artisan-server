@@ -126,29 +126,20 @@ async function inlineCanvasImages(canvasJson) {
 app.post("/render", authMiddleware, async (req, res) => {
   const { templateId, companyId, name, width, height, canvasJson } = req.body || {};
   console.log("RENDER PAYLOAD", {
-    templateId: req.body.templateId,
-    companyId: req.body.companyId,
-    width: req.body.width,
-    height: req.body.height,
-    hasCanvasJson: !!req.body.canvasJson,
-    objectCount: req.body.canvasJson?.objects?.length,
+    templateId,
+    companyId,
+    width,
+    height,
+    hasCanvasJson: !!canvasJson,
+    objectCount: canvasJson?.objects?.length ?? 0,
   });
   if (!templateId || !companyId || !canvasJson || !width || !height) {
     return res.status(400).json({ success: false, error: "Missing required fields" });
   }
 
   const objectCount = Array.isArray(canvasJson.objects) ? canvasJson.objects.length : 0;
-  console.log("[/render]", {
-    templateId,
-    companyId,
-    name,
-    width,
-    height,
-    objectCount,
-    canvasJsonPreview: JSON.stringify(canvasJson).slice(0, 500),
-  });
   if (objectCount === 0) {
-    return res.status(400).json({ success: false, error: "Template has no objects." });
+    return res.status(400).json({ success: false, error: "Template has no objects" });
   }
 
   const docRef = firestore.collection("rendered_templates").doc(`${companyId}_${templateId}`);
