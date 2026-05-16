@@ -1,5 +1,4 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { createConnection } from "node:net";
 
 export type RendererSettings = {
   user_id: string;
@@ -38,7 +37,9 @@ export async function checkRendererHealth(rendererUrl: string, rendererAuthToken
 
   return new Promise((resolve) => {
     const port = parsed.port ? Number(parsed.port) : 80;
-    const socket = createConnection({ host: parsed.hostname, port });
+    import("node:net")
+      .then(({ createConnection }) => {
+        const socket = createConnection({ host: parsed.hostname, port });
     let raw = "";
     let settled = false;
     const finish = () => {
@@ -61,6 +62,11 @@ export async function checkRendererHealth(rendererUrl: string, rendererAuthToken
       settled = true;
       resolve({ ok: false, status: 0, statusText: "Request failed", url, body: e.message });
     });
+      })
+      .catch((e) => {
+        const message = e instanceof Error ? e.message : String(e);
+        resolve({ ok: false, status: 0, statusText: "Request failed", url, body: message });
+      });
   });
 }
 
