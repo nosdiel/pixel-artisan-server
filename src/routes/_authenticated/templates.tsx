@@ -77,6 +77,149 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+const VIDEO_RECORDING_FPS = 30;
+const VIDEO_RECORDING_MIN_SECONDS = 10;
+const VIDEO_RECORDING_MAX_SECONDS = 30;
+const VIDEO_RECORDING_BITRATE = 5_000_000;
+
+function pickRecorderMimeType() {
+  const candidates = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+    "video/mp4;codecs=avc1",
+    "video/mp4",
+  ];
+  return candidates.find((m) =>
+    typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
+  );
+}
+
+function waitForAnimationFrames(count: number) {
+  return new Promise<void>((resolve) => {
+    const step = (remaining: number) => {
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(() => step(remaining - 1));
+    };
+    step(count);
+  });
+}
+
+function waitForVideoCanPlay(video: HTMLVideoElement, label: string, timeoutMs = 15_000) {
+  return new Promise<void>((resolve, reject) => {
+    let timeoutId: number | null = null;
+    const cleanup = () => {
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      video.removeEventListener("loadeddata", check);
+      video.removeEventListener("canplay", check);
+      video.removeEventListener("error", onError);
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(`Failed to load video for publishing: ${label}`));
+    };
+    const check = () => {
+      if (video.readyState >= 3) {
+        cleanup();
+        resolve();
+      }
+    };
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for video to become playable: ${label}`));
+    }, timeoutMs);
+    video.addEventListener("loadeddata", check);
+    video.addEventListener("canplay", check);
+    video.addEventListener("error", onError);
+    video.load();
+    check();
+  });
+}
+
+async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: number) {
+  if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
+
+  const resolved = await new Promise<number>((resolve) => {
+    let timeoutId: number | null = null;
+    const cleanup = () => {
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      video.removeEventListener("durationchange", done);
+      video.removeEventListener("seeked", done);
+      video.removeEventListener("error", done);
+    };
+    const done = () => {
+      const duration = Number.isFinite(video.duration) && video.duration > 0
+        ? video.duration
+        : fallbackSeconds;
+      cleanup();
+      resolve(duration);
+    };
+    video.addEventListener("durationchange", done);
+    video.addEventListener("seeked", done);
+    video.addEventListener("error", done);
+    timeoutId = window.setTimeout(done, 2_000);
+    try { video.currentTime = 1e9; } catch { done(); }
+  });
+
+  try { video.currentTime = 0; } catch {}
+  return resolved;
+}
+
+async function verifyRecordedVideoBlob(blob: Blob, expectedSeconds: number) {
+  const minBytes = Math.max(600_000, Math.round(expectedSeconds * 60_000));
+  if (blob.size < minBytes) {
+    throw new Error(
+      `Recorded video is too small (${Math.round(blob.size / 1024)} KB). Refusing to upload an invalid render.`,
+    );
+  }
+
+  const previewUrl = URL.createObjectURL(blob);
+  const preview = document.createElement("video");
+  preview.src = previewUrl;
+  preview.muted = true;
+  preview.playsInline = true;
+  preview.preload = "auto";
+  preview.style.position = "fixed";
+  preview.style.left = "-9999px";
+  preview.style.top = "0";
+  preview.style.width = "1px";
+  preview.style.height = "1px";
+  preview.style.opacity = "0";
+  preview.style.pointerEvents = "none";
+  document.body.appendChild(preview);
+
+  try {
+    console.info("Local recorded video preview", { previewUrl, size: blob.size, type: blob.type });
+    await waitForVideoCanPlay(preview, "local recorded preview");
+    const durationSeconds = await resolveVideoDuration(preview, expectedSeconds);
+    const minValidDuration = Math.max(VIDEO_RECORDING_MIN_SECONDS - 0.75, expectedSeconds * 0.85);
+    if (!Number.isFinite(durationSeconds) || durationSeconds < minValidDuration) {
+      throw new Error(
+        `Recorded video duration is invalid (${durationSeconds.toFixed(2)}s). Refusing to upload.`,
+      );
+    }
+
+    preview.currentTime = 0;
+    await preview.play();
+    await new Promise<void>((resolve, reject) => {
+      const startedAt = performance.now();
+      const targetTime = Math.min(1, durationSeconds / 4);
+      const check = () => {
+        if (!preview.paused && preview.currentTime >= targetTime) resolve();
+        else if (performance.now() - startedAt > 5_000) reject(new Error("Recorded preview did not play locally. Refusing to upload."));
+        else requestAnimationFrame(check);
+      };
+      requestAnimationFrame(check);
+    });
+
+    return { durationSeconds, previewUrl };
+  } finally {
+    try { preview.pause(); } catch {}
+    preview.remove();
+    window.setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000);
+  }
+}
+
 function TemplatesPage() {
   const qc = useQueryClient();
   const fetchItems = useServerFn(listSquareItems);
