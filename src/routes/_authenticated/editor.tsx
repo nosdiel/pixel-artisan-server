@@ -513,7 +513,7 @@ function EditorPage() {
     if (!fc) return;
     const { w, h } = PRESETS[preset];
     fc.setZoom(zoom);
-    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
+    fc.setDimensions({ width: w * zoom, height: h * zoom });
     fc.requestRenderAll();
   }, [zoom, preset]);
 
