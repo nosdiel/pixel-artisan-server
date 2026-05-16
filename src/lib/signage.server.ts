@@ -1,4 +1,6 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import http from "node:http";
+import https from "node:https";
 
 export type RendererSettings = {
   user_id: string;
@@ -13,6 +15,51 @@ export type RendererResponse = {
   downloadUrl?: string;
   error?: string;
 };
+
+export type RendererHealthResponse = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  url: string;
+  body: string;
+};
+
+export async function checkRendererHealth(rendererUrl: string, rendererAuthToken: string | null): Promise<RendererHealthResponse> {
+  const url = rendererUrl.replace(/\/+$/, "") + "/health";
+  const parsed = new URL(url);
+  const rawToken = rendererAuthToken?.trim().replace(/^Bearer\s+/i, "") ?? "";
+  const headers: Record<string, string> = { Accept: "application/json, text/plain, */*" };
+  if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
+
+  const client = parsed.protocol === "https:" ? https : http;
+
+  return new Promise((resolve) => {
+    const req = client.request(
+      parsed,
+      { method: "GET", headers, timeout: 15000 },
+      (res) => {
+        res.setEncoding("utf8");
+        let body = "";
+        res.on("data", (chunk) => {
+          if (body.length < 4000) body += chunk;
+        });
+        res.on("end", () => {
+          resolve({
+            ok: !!res.statusCode && res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode ?? 0,
+            statusText: res.statusMessage || "",
+            url,
+            body: body.slice(0, 2000),
+          });
+        });
+      },
+    );
+
+    req.on("timeout", () => req.destroy(new Error("Renderer health check timed out after 15 seconds")));
+    req.on("error", (e) => resolve({ ok: false, status: 0, statusText: "Request failed", url, body: e.message }));
+    req.end();
+  });
+}
 
 /**
  * POST a template payload to the user's external renderer service.
