@@ -131,7 +131,7 @@ app.post("/render", authMiddleware, async (req, res) => {
     width,
     height,
     hasCanvasJson: !!canvasJson,
-    objectCount: canvasJson?.objects?.length ?? 0,
+    canvasObjectCount: canvasJson?.objects?.length ?? 0,
   });
   if (!templateId || !companyId || !canvasJson || !width || !height) {
     return res.status(400).json({ success: false, error: "Missing required fields" });
@@ -218,110 +218,130 @@ async function renderPng({ width, height, canvasJson }) {
     await page.setContent(html, { waitUntil: "load" });
     await page.addScriptTag({ content: FABRIC_SOURCE });
 
-    const renderInfo = await page.evaluate(async (json, renderWidth, renderHeight) => {
-      const fabric = window.fabric;
-      if (!fabric) throw new Error("Fabric.js failed to load");
-      const CanvasClass = fabric.StaticCanvas || fabric.Canvas;
-      const canvas = new CanvasClass("c", {
-        width: renderWidth,
-        height: renderHeight,
-        enableRetinaScaling: false,
-        backgroundColor: json.background || "#ffffff",
-        renderOnAddRemove: false,
-      });
+    await page.evaluate((json, renderWidth, renderHeight) => {
+      window.__renderState = { status: "running", startedAt: Date.now() };
 
-      // Fabric 7 returns a Promise from loadFromJSON. Do not pass a callback:
-      // in newer Fabric versions the second argument is a reviver, which can
-      // resolve too early and produce a white export.
-      const loadResult = canvas.loadFromJSON(json);
-      if (!loadResult || typeof loadResult.then !== "function") {
-        throw new Error("Local Fabric loadFromJSON did not return a Promise; reinstall fabric@7.3.1 in renderer-service");
-      }
-      await Promise.race([
-        loadResult,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out loading Fabric JSON")), 60000)),
-      ]);
-
-      const allObjects = canvas.getObjects();
-      if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
-
-      const imageObjects = allObjects.filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
-      // Wait per-image with a 10s individual timeout so one slow asset can't hang the render.
-      await Promise.all(
-        imageObjects.map((obj) => {
-          const el = typeof obj.getElement === "function" ? obj.getElement() : null;
-          if (!el || el.tagName !== "IMG" || el.complete) return Promise.resolve();
-          return new Promise((resolve) => {
-            const done = () => resolve();
-            el.onload = done;
-            el.onerror = done;
-            setTimeout(done, 10000);
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const withTimeout = (promise, ms, message) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(message)), ms);
+        Promise.resolve(promise)
+          .then((value) => {
+            clearTimeout(timer);
+            resolve(value);
+          })
+          .catch((error) => {
+            clearTimeout(timer);
+            reject(error);
           });
-        }),
-      );
-      const failedImages = imageObjects
-        .map((obj) => {
-          const el = typeof obj.getElement === "function" ? obj.getElement() : null;
-          const src = typeof obj.getSrc === "function" ? obj.getSrc() : obj.src;
-          return { el, src };
-        })
-        .filter(({ el }) => el && el.tagName === "IMG" && (!el.naturalWidth || !el.naturalHeight))
-        .map(({ src }) => String(src || "unknown").slice(0, 160));
-      if (failedImages.length) throw new Error(`Image layer failed to load: ${failedImages.join(", ")}`);
-
-      const visibleObjects = allObjects.filter((obj) => obj.visible !== false && (obj.opacity ?? 1) > 0);
-      const visibleOnCanvas = visibleObjects.filter((obj) => {
-        const bounds = obj.getBoundingRect ? obj.getBoundingRect() : obj;
-        return bounds.left < renderWidth && bounds.top < renderHeight && bounds.left + bounds.width > 0 && bounds.top + bounds.height > 0;
       });
-      if (visibleOnCanvas.length === 0) {
-        throw new Error("Fabric loaded objects, but none are visible within the render canvas");
-      }
 
-      // Wait for fonts (custom or web fonts used in text objects)
-      if (document.fonts && document.fonts.ready) {
-        try { await document.fonts.ready; } catch {}
-      }
+      const waitForImageObject = (obj, index) => {
+        const el = typeof obj.getElement === "function" ? obj.getElement() : null;
+        if (!el || el.tagName !== "IMG") return Promise.resolve();
+        if (el.complete && el.naturalWidth && el.naturalHeight) return Promise.resolve();
 
-      canvas.renderAll();
-      // Allow Fabric a moment to fully flush text/image rasterization.
-      await new Promise((r) => setTimeout(r, 500));
-      canvas.renderAll();
-
-      const ctx = canvas.lowerCanvasEl.getContext("2d", { willReadFrequently: true });
-      const pixels = ctx.getImageData(0, 0, renderWidth, renderHeight).data;
-      let nonWhitePixels = 0;
-      let paintedPixels = 0;
-      for (let i = 0; i < pixels.length; i += 4) {
-        const alpha = pixels[i + 3];
-        if (alpha > 5) {
-          paintedPixels += 1;
-          if (pixels[i] < 250 || pixels[i + 1] < 250 || pixels[i + 2] < 250) nonWhitePixels += 1;
-        }
-      }
-      const nonWhiteRatio = paintedPixels ? nonWhitePixels / paintedPixels : 0;
-      if (!paintedPixels || nonWhiteRatio < 0.0005) {
-        throw new Error(`Rendered PNG is blank white (nonWhiteRatio=${nonWhiteRatio.toFixed(6)}, objects=${allObjects.length})`);
-      }
-
-      const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
-      return {
-        loadedCount: allObjects.length,
-        visibleOnCanvasCount: visibleOnCanvas.length,
-        nonWhiteRatio,
-        dataUrl,
-        objectSummary: allObjects.map((obj) => ({
-          type: obj.type,
-          left: obj.left,
-          top: obj.top,
-          width: obj.width,
-          height: obj.height,
-          scaleX: obj.scaleX,
-          scaleY: obj.scaleY,
-          visible: obj.visible,
-        })),
+        const src = typeof obj.getSrc === "function" ? obj.getSrc() : obj.src;
+        return withTimeout(
+          new Promise((resolve, reject) => {
+            el.onload = () => resolve();
+            el.onerror = () => reject(new Error(`Image layer ${index + 1} failed to load: ${String(src || "unknown").slice(0, 160)}`));
+          }),
+          15000,
+          `Image layer ${index + 1} timed out: ${String(src || "unknown").slice(0, 160)}`,
+        );
       };
+
+      void (async () => {
+        const fabric = window.fabric;
+        if (!fabric) throw new Error("Fabric.js failed to load");
+        if (!Array.isArray(json?.objects) || json.objects.length === 0) throw new Error("Template has no objects");
+
+        const CanvasClass = fabric.StaticCanvas || fabric.Canvas;
+        const canvas = new CanvasClass("c", {
+          width: renderWidth,
+          height: renderHeight,
+          enableRetinaScaling: false,
+          backgroundColor: json.background || "#ffffff",
+          renderOnAddRemove: false,
+        });
+
+        await withTimeout(canvas.loadFromJSON(json), 120000, "Timed out loading Fabric JSON");
+
+        const allObjects = canvas.getObjects();
+        if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
+
+        const imageObjects = allObjects.filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
+        await Promise.all(imageObjects.map(waitForImageObject));
+
+        if (document.fonts?.ready) {
+          await withTimeout(document.fonts.ready, 15000, "Timed out waiting for fonts");
+        }
+
+        const visibleObjects = allObjects.filter((obj) => obj.visible !== false && (obj.opacity ?? 1) > 0);
+        const visibleOnCanvas = visibleObjects.filter((obj) => {
+          const bounds = obj.getBoundingRect ? obj.getBoundingRect() : obj;
+          return bounds.left < renderWidth && bounds.top < renderHeight && bounds.left + bounds.width > 0 && bounds.top + bounds.height > 0;
+        });
+        if (visibleOnCanvas.length === 0) {
+          throw new Error("Fabric loaded objects, but none are visible within the render canvas");
+        }
+
+        canvas.renderAll();
+        await wait(500);
+        canvas.renderAll();
+
+        const ctx = canvas.lowerCanvasEl.getContext("2d", { willReadFrequently: true });
+        const pixels = ctx.getImageData(0, 0, renderWidth, renderHeight).data;
+        let nonWhitePixels = 0;
+        let paintedPixels = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          const alpha = pixels[i + 3];
+          if (alpha > 5) {
+            paintedPixels += 1;
+            if (pixels[i] < 250 || pixels[i + 1] < 250 || pixels[i + 2] < 250) nonWhitePixels += 1;
+          }
+        }
+        const nonWhiteRatio = paintedPixels ? nonWhitePixels / paintedPixels : 0;
+        if (!paintedPixels || nonWhiteRatio < 0.0005) {
+          throw new Error(`Rendered PNG is blank white (nonWhiteRatio=${nonWhiteRatio.toFixed(6)}, objects=${allObjects.length})`);
+        }
+
+        window.__renderState = {
+          status: "done",
+          result: {
+            loadedCount: allObjects.length,
+            visibleOnCanvasCount: visibleOnCanvas.length,
+            imageObjectCount: imageObjects.length,
+            nonWhiteRatio,
+            dataUrl: canvas.toDataURL({ format: "png", multiplier: 1 }),
+            objectSummary: allObjects.map((obj) => ({
+              type: obj.type,
+              left: obj.left,
+              top: obj.top,
+              width: obj.width,
+              height: obj.height,
+              scaleX: obj.scaleX,
+              scaleY: obj.scaleY,
+              visible: obj.visible,
+            })),
+          },
+        };
+      })().catch((error) => {
+        window.__renderState = {
+          status: "error",
+          error: error?.stack || error?.message || String(error),
+        };
+      });
     }, canvasJson, width, height);
+
+    await page.waitForFunction(
+      () => window.__renderState?.status === "done" || window.__renderState?.status === "error",
+      { timeout: 180000, polling: 250 },
+    );
+    const renderState = await page.evaluate(() => window.__renderState);
+    if (renderState?.status === "error") throw new Error(renderState.error || "Renderer page failed");
+    const renderInfo = renderState?.result;
+    if (!renderInfo?.dataUrl) throw new Error("Renderer page finished without PNG data");
     console.log("[/render] fabric canvas ready", {
       loadedCount: renderInfo.loadedCount,
       visibleOnCanvasCount: renderInfo.visibleOnCanvasCount,
