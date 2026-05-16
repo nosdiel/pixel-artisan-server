@@ -153,7 +153,7 @@ async function renderPng({ width, height, canvasJson }) {
       html,body{margin:0;padding:0;background:transparent}
       canvas{display:block}
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/fabric@6.5.1/dist/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fabric@7.3.1/dist/index.min.js"></script>
     </head><body>
     <canvas id="c" width="${width}" height="${height}"></canvas>
     </body></html>`;
@@ -162,7 +162,8 @@ async function renderPng({ width, height, canvasJson }) {
     const renderInfo = await page.evaluate(async (json, renderWidth, renderHeight) => {
       const fabric = window.fabric;
       if (!fabric) throw new Error("Fabric.js failed to load from CDN");
-      const canvas = new fabric.StaticCanvas("c", {
+      const CanvasClass = fabric.StaticCanvas || fabric.Canvas;
+      const canvas = new CanvasClass("c", {
         width: renderWidth,
         height: renderHeight,
         enableRetinaScaling: false,
@@ -216,8 +217,10 @@ async function renderPng({ width, height, canvasJson }) {
       await new Promise((r) => setTimeout(r, 100));
       canvas.renderAll();
 
+      const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
       return {
         loadedCount: canvas.getObjects().length,
+        dataUrl,
         objectSummary: canvas.getObjects().map((obj) => ({
           type: obj.type,
           left: obj.left,
@@ -230,10 +233,13 @@ async function renderPng({ width, height, canvasJson }) {
         })),
       };
     }, canvasJson, width, height);
-    console.log("[/render] fabric canvas ready", renderInfo);
+    console.log("[/render] fabric canvas ready", {
+      loadedCount: renderInfo.loadedCount,
+      objectSummary: renderInfo.objectSummary,
+      dataUrlBytes: renderInfo.dataUrl.length,
+    });
 
-    const buf = await page.screenshot({ type: "png", omitBackground: false, clip: { x: 0, y: 0, width, height } });
-    return buf;
+    return Buffer.from(renderInfo.dataUrl.split(",")[1], "base64");
   } finally {
     await page.close().catch(() => {});
   }
