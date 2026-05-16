@@ -25,7 +25,7 @@ const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
 const CHROME_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH || "/usr/bin/google-chrome";
-const RENDERER_VERSION = "2026-05-16-fabric7-blank-guard";
+const RENDERER_VERSION = "2026-05-16-fabric7-page-render-state";
 
 // Load Fabric.js from node_modules so we don't depend on a CDN at render time.
 let FABRIC_SOURCE = "";
