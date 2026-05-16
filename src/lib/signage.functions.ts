@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { callRenderer, publishTemplateToRenderer } from "./signage.server";
+import { callRenderer, checkRendererHealth, publishTemplateToRenderer } from "./signage.server";
 
 export const getSignageSettings = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -63,23 +63,13 @@ export const testRenderer = createServerFn({ method: "POST" })
 
     if (!rendererUrl) throw new Error("Renderer URL is not set");
 
-    const url = rendererUrl.replace(/\/+$/, "") + "/health";
-    const headers: Record<string, string> = { Accept: "application/json, text/plain, */*" };
     const rawToken = rendererAuthToken?.trim().replace(/^Bearer\s+/i, "") ?? "";
-    if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
 
     try {
-      const res = await fetch(url, { method: "GET", headers, redirect: "follow" });
-      const body = await res.text();
-      return {
-        ok: res.ok,
-        status: res.status,
-        statusText: res.statusText,
-        url,
-        body: body.slice(0, 2000),
-      };
+      return await checkRendererHealth(rendererUrl, rawToken || null);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      const url = rendererUrl.replace(/\/+$/, "") + "/health";
       return { ok: false, status: 0, statusText: "Request failed", url, body: message };
     }
   });
