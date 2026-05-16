@@ -16,6 +16,7 @@ templates to PNG, upload to Firebase Storage, and update Firestore.
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | yes | Full service account JSON (single line) from Firebase Console → Project Settings → Service Accounts. |
 | `FIREBASE_STORAGE_BUCKET` | yes | e.g. `my-project.appspot.com` |
 | `AUTH_TOKEN` | recommended | Shared secret. If set, requests must send `Authorization: Bearer <AUTH_TOKEN>`. Paste the same value in the Lovable app's Settings → Signage publishing. |
+| `PUPPETEER_EXECUTABLE_PATH` | no | Defaults to `/usr/bin/google-chrome` in the included Docker image. Set this if your host installs Chrome elsewhere. |
 | `PORT` | no | Defaults to `8080`. |
 
 ## Storage layout
@@ -62,3 +63,4 @@ gcloud run deploy signage-renderer \
 (Store the service account JSON in Secret Manager as `firebase-sa`.)
 
 Render/Fly/Railway also work — point them at the included `Dockerfile`.
+If you deploy without the Dockerfile, make sure Chrome and its Linux libraries are installed; otherwise publish can fail with errors like `libatk-1.0.so.0: cannot open shared object file`.

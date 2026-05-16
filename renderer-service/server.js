@@ -23,6 +23,7 @@ const puppeteer = require("puppeteer");
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
+const CHROME_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH || "/usr/bin/google-chrome";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
@@ -48,6 +49,7 @@ function getBrowser() {
   if (!browserPromise) {
     browserPromise = puppeteer.launch({
       headless: "new",
+      executablePath: CHROME_EXECUTABLE_PATH,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     });
   }
