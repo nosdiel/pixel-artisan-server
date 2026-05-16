@@ -385,15 +385,16 @@ function TemplatesPage() {
       const recorderMime = pickRecorderMimeType();
       if (!recorderMime) throw new Error("Browser does not support MediaRecorder for video output");
 
-      const stream = (canvasEl as HTMLCanvasElement).captureStream(30);
-      recorder = new MediaRecorder(stream, { mimeType: recorderMime, videoBitsPerSecond: 5_000_000 });
+      const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
+      recorder = new MediaRecorder(stream, { mimeType: recorderMime, videoBitsPerSecond: VIDEO_RECORDING_BITRATE });
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
 
       const recordingDone = new Promise<Blob>((resolve, reject) => {
         recorder!.onstop = () => {
           const outMime = recorderMime.startsWith("video/mp4") ? "video/mp4" : "video/webm";
-          resolve(new Blob(chunks, { type: outMime }));
+          if (chunks.length === 0) reject(new Error("MediaRecorder produced no video chunks"));
+          else resolve(new Blob(chunks, { type: outMime }));
         };
         recorder!.onerror = (e) => reject(new Error(`MediaRecorder error: ${String((e as any).error?.message || e)}`));
       });
@@ -401,10 +402,12 @@ function TemplatesPage() {
       // Start playback FIRST so the stream has frames, then start recording.
       // Loop videos so even a 1s clip records the full window without ending
       // the stream prematurely. We stop strictly via wall-clock timer.
-      videos.forEach((v) => { v.loop = true; v.currentTime = 0; });
+      videos.forEach((v) => { v.loop = true; try { v.currentTime = 0; } catch {} });
+      await Promise.all(videos.map((v) => waitForVideoCanPlay(v, v.currentSrc || v.src)));
       await Promise.all(videos.map((v) => v.play()));
       // Give the canvas a couple of frames before opening the recorder.
-      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      await waitForAnimationFrames(3);
+      staticCanvas.renderAll();
       recorder.start(250);
       window.setTimeout(() => {
         try { recorder?.state === "recording" && recorder.stop(); } catch {}
@@ -414,6 +417,8 @@ function TemplatesPage() {
       const mimeOut: "video/mp4" | "video/webm" = recorderMime.startsWith("video/mp4")
         ? "video/mp4"
         : "video/webm";
+      const verified = await verifyRecordedVideoBlob(blob, maxDur);
+      toast.success(`Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(blob.size / 1024)} KB)`);
       const base64 = await blobToBase64(blob);
       return await uploadRenderedVideo({
         data: {
@@ -422,11 +427,12 @@ function TemplatesPage() {
           mimeType: mimeOut,
           width: prep.width,
           height: prep.height,
-          durationMs: Math.round(maxDur * 1000),
+          durationMs: Math.round(verified.durationSeconds * 1000),
         },
       });
     } finally {
       if (rafId != null) cancelAnimationFrame(rafId);
+      try { recorder?.state === "recording" && recorder.stop(); } catch {}
       videos.forEach((v) => { try { v.pause(); v.src = ""; v.load(); } catch {} });
       staticCanvas.dispose();
     }
