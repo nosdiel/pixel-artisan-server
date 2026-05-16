@@ -223,7 +223,10 @@ async function renderPng({ width, height, canvasJson }) {
         await new Promise((resolve) => canvas.loadFromJSON(json, resolve));
       }
 
-      const imageObjects = canvas.getObjects().filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
+      const allObjects = canvas.getObjects();
+      if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
+
+      const imageObjects = allObjects.filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
       await Promise.all(
         imageObjects.map((obj) => {
           const el = typeof obj.getElement === "function" ? obj.getElement() : null;
@@ -240,6 +243,15 @@ async function renderPng({ width, height, canvasJson }) {
         .filter(({ el }) => el && el.tagName === "IMG" && (!el.naturalWidth || !el.naturalHeight))
         .map(({ src }) => String(src || "unknown").slice(0, 160));
       if (failedImages.length) throw new Error(`Image layer failed to load: ${failedImages.join(", ")}`);
+
+      const visibleObjects = allObjects.filter((obj) => obj.visible !== false && (obj.opacity ?? 1) > 0);
+      const visibleOnCanvas = visibleObjects.filter((obj) => {
+        const bounds = obj.getBoundingRect ? obj.getBoundingRect() : obj;
+        return bounds.left < renderWidth && bounds.top < renderHeight && bounds.left + bounds.width > 0 && bounds.top + bounds.height > 0;
+      });
+      if (visibleOnCanvas.length === 0) {
+        throw new Error("Fabric loaded objects, but none are visible within the render canvas");
+      }
 
       // Wait for any <img> resources referenced by fabric objects to finish loading
       const imgs = Array.from(document.images || []);
@@ -263,9 +275,10 @@ async function renderPng({ width, height, canvasJson }) {
 
       const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
       return {
-        loadedCount: canvas.getObjects().length,
+        loadedCount: allObjects.length,
+        visibleOnCanvasCount: visibleOnCanvas.length,
         dataUrl,
-        objectSummary: canvas.getObjects().map((obj) => ({
+        objectSummary: allObjects.map((obj) => ({
           type: obj.type,
           left: obj.left,
           top: obj.top,
@@ -279,6 +292,7 @@ async function renderPng({ width, height, canvasJson }) {
     }, canvasJson, width, height);
     console.log("[/render] fabric canvas ready", {
       loadedCount: renderInfo.loadedCount,
+      visibleOnCanvasCount: renderInfo.visibleOnCanvasCount,
       objectSummary: renderInfo.objectSummary,
       dataUrlBytes: renderInfo.dataUrl.length,
     });
