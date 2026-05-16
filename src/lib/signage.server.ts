@@ -206,6 +206,7 @@ export async function prepareTemplateForBrowserRender(userId: string, templateId
   }
 
   const { canvasJson, refreshedImages, inlinedImageBytes } = await refreshCanvasMediaUrls(originalCanvasJson);
+  const normalizedImages = normalizeOversizedBaseImages(canvasJson, renderWidth, renderHeight);
   console.log("[prepareTemplate]", {
     templateId: tpl.id,
     name: tpl.name,
@@ -214,6 +215,7 @@ export async function prepareTemplateForBrowserRender(userId: string, templateId
     objectCount,
     refreshedImages,
     inlinedImageBytes,
+    normalizedImages,
   });
 
   return {
