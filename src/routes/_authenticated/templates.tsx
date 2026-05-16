@@ -136,6 +136,42 @@ function waitForVideoCanPlay(video: HTMLVideoElement, label: string, timeoutMs =
   });
 }
 
+function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5_000) {
+  const target = video as HTMLVideoElement;
+  return new Promise<void>((resolve, reject) => {
+    let done = false;
+    const finish = (error?: Error) => {
+      if (done) return;
+      done = true;
+      if (error) reject(error);
+      else resolve();
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      finish(new Error(`Timed out waiting for video frame: ${label}`));
+    }, timeoutMs);
+
+    const cleanupFinish = (error?: Error) => {
+      window.clearTimeout(timeoutId);
+      finish(error);
+    };
+
+    const requestVideoFrameCallback = (target as any).requestVideoFrameCallback as ((cb: () => void) => number) | undefined;
+    if (typeof requestVideoFrameCallback === "function") {
+      requestVideoFrameCallback.call(target, () => cleanupFinish());
+      return;
+    }
+
+    const startedAt = performance.now();
+    const check = () => {
+      if (target.readyState >= 2 && target.currentTime > 0) cleanupFinish();
+      else if (performance.now() - startedAt > timeoutMs) cleanupFinish(new Error(`Timed out waiting for video frame: ${label}`));
+      else requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
+}
+
 async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: number) {
   if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
 
@@ -373,19 +409,26 @@ function TemplatesPage() {
       const longest = Math.max(...durations, VIDEO_RECORDING_MIN_SECONDS);
       const maxDur = Math.min(VIDEO_RECORDING_MAX_SECONDS, Math.max(VIDEO_RECORDING_MIN_SECONDS, longest));
 
-      // RAF loop: keep re-rendering so videos animate. Draw at least one
-      // frame before recording starts so the captureStream has real content.
+      const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
+      const canvasTrack = stream.getVideoTracks()[0] as MediaStreamTrack & { requestFrame?: () => void };
+      const requestCanvasFrame = typeof canvasTrack?.requestFrame === "function"
+        ? () => canvasTrack.requestFrame?.()
+        : null;
+
+      // RAF loop: keep re-rendering so videos animate, and explicitly push
+      // canvas frames when the browser exposes CanvasCaptureMediaStreamTrack.
       const tick = () => {
         staticCanvas.renderAll();
+        requestCanvasFrame?.();
         rafId = requestAnimationFrame(tick);
       };
       staticCanvas.renderAll();
+      requestCanvasFrame?.();
       rafId = requestAnimationFrame(tick);
 
       const recorderMime = pickRecorderMimeType();
       if (!recorderMime) throw new Error("Browser does not support MediaRecorder for video output");
 
-      const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
       recorder = new MediaRecorder(stream, { mimeType: recorderMime, videoBitsPerSecond: VIDEO_RECORDING_BITRATE });
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -405,9 +448,11 @@ function TemplatesPage() {
       videos.forEach((v) => { v.loop = true; try { v.currentTime = 0; } catch {} });
       await Promise.all(videos.map((v) => waitForVideoCanPlay(v, v.currentSrc || v.src)));
       await Promise.all(videos.map((v) => v.play()));
+      await Promise.all(videos.map((v) => waitForVideoFrame(v, v.currentSrc || v.src)));
       // Give the canvas a couple of frames before opening the recorder.
       await waitForAnimationFrames(3);
       staticCanvas.renderAll();
+      requestCanvasFrame?.();
       recorder.start(250);
       window.setTimeout(() => {
         try { recorder?.state === "recording" && recorder.stop(); } catch {}
