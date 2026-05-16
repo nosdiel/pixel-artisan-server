@@ -1,7 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { callRenderer, checkRendererHealth, publishTemplateToRenderer } from "./signage.server";
+import {
+  checkRendererHealth,
+  prepareTemplateForBrowserRender,
+  uploadRenderedPng,
+} from "./signage.server";
 
 export const getSignageSettings = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -62,9 +66,7 @@ export const testRenderer = createServerFn({ method: "POST" })
     }
 
     if (!rendererUrl) throw new Error("Renderer URL is not set");
-
     const rawToken = rendererAuthToken?.trim().replace(/^Bearer\s+/i, "") ?? "";
-
     try {
       return await checkRendererHealth(rendererUrl, rawToken || null);
     } catch (e) {
@@ -74,11 +76,33 @@ export const testRenderer = createServerFn({ method: "POST" })
     }
   });
 
-export const publishTemplate = createServerFn({ method: "POST" })
+/**
+ * Step 1 of publish: returns canvasJson (with images inlined as base64) plus
+ * the dimensions / company id the browser needs to render the PNG.
+ */
+export const prepareTemplatePublish = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ templateId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
-    return publishTemplateToRenderer(context.userId, data.templateId);
+    return prepareTemplateForBrowserRender(context.userId, data.templateId);
+  });
+
+/**
+ * Step 2 of publish: takes the browser-rendered PNG (base64) and forwards
+ * it to the upload service.
+ */
+export const publishRenderedTemplate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      templateId: z.string().uuid(),
+      pngBase64: z.string().min(64).max(60 * 1024 * 1024),
+      width: z.number().int().positive().max(20000).optional(),
+      height: z.number().int().positive().max(20000).optional(),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    return uploadRenderedPng(context.userId, data);
   });
 
 export const listTemplatesWithPublishStatus = createServerFn({ method: "GET" })
@@ -91,6 +115,3 @@ export const listTemplatesWithPublishStatus = createServerFn({ method: "GET" })
     if (error) throw new Error(error.message);
     return { rows: data ?? [] };
   });
-
-// Re-export so unused-import lint doesn't strip helper
-export { callRenderer };

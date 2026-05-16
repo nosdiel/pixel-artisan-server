@@ -26,7 +26,11 @@ import {
   setTemplateBindings,
   deleteTemplate,
 } from "@/lib/square.functions";
-import { publishTemplate, listTemplatesWithPublishStatus } from "@/lib/signage.functions";
+import {
+  prepareTemplatePublish,
+  publishRenderedTemplate,
+  listTemplatesWithPublishStatus,
+} from "@/lib/signage.functions";
 
 export const Route = createFileRoute("/_authenticated/templates")({ component: TemplatesPage });
 
@@ -48,7 +52,8 @@ function TemplatesPage() {
   const fetchLatestJob = useServerFn(getLatestSquareSyncJob);
   const saveBindings = useServerFn(setTemplateBindings);
   const deleteTpl = useServerFn(deleteTemplate);
-  const publishTpl = useServerFn(publishTemplate);
+  const preparePublish = useServerFn(prepareTemplatePublish);
+  const uploadRendered = useServerFn(publishRenderedTemplate);
   const fetchPublishStatus = useServerFn(listTemplatesWithPublishStatus);
 
   const itemsQ = useQuery({ queryKey: ["square-items"], queryFn: () => fetchItems() });
@@ -60,13 +65,67 @@ function TemplatesPage() {
   });
 
   const publishM = useMutation({
-    mutationFn: (templateId: string) => publishTpl({ data: { templateId } }),
+    mutationFn: (templateId: string) => publishTemplateInBrowser(templateId),
     onSuccess: (r) => {
       toast.success(r.downloadUrl ? "Published to Firebase" : "Renderer accepted job");
       qc.invalidateQueries({ queryKey: ["templates-publish-status"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // Render the saved template canvas into a hidden Fabric StaticCanvas in
+  // the browser, export PNG, then send the bytes to the upload service.
+  async function publishTemplateInBrowser(templateId: string) {
+    const prep = await preparePublish({ data: { templateId } });
+    if (!prep?.canvasJson) throw new Error("Template has no canvas data");
+
+    const fabric = await import("fabric");
+    const canvasEl = document.createElement("canvas");
+    canvasEl.width = prep.width;
+    canvasEl.height = prep.height;
+    const staticCanvas = new fabric.StaticCanvas(canvasEl, {
+      width: prep.width,
+      height: prep.height,
+      enableRetinaScaling: false,
+      backgroundColor:
+        (prep.canvasJson as { background?: string }).background ?? "#ffffff",
+      renderOnAddRemove: false,
+    });
+
+    try {
+      await staticCanvas.loadFromJSON(prep.canvasJson);
+      const objs = staticCanvas.getObjects();
+      if (objs.length === 0) throw new Error("Fabric loaded 0 objects");
+      // Wait a tick so any image elements decode before render.
+      await new Promise((r) => setTimeout(r, 50));
+      staticCanvas.renderAll();
+      await new Promise((r) => setTimeout(r, 200));
+      staticCanvas.renderAll();
+
+      const dataUrl = staticCanvas.toDataURL({
+        format: "png",
+        multiplier: 1,
+        enableRetinaScaling: false,
+      });
+      const pngBase64 = dataUrl.startsWith("data:")
+        ? dataUrl.slice(dataUrl.indexOf(",") + 1)
+        : dataUrl;
+      if (!pngBase64 || pngBase64.length < 64) {
+        throw new Error("Browser produced an empty PNG");
+      }
+
+      return await uploadRendered({
+        data: {
+          templateId,
+          pngBase64,
+          width: prep.width,
+          height: prep.height,
+        },
+      });
+    } finally {
+      staticCanvas.dispose();
+    }
+  }
 
   const publishById = new Map(
     (publishStatusQ.data?.rows ?? []).map((r) => [r.id, r] as const),
