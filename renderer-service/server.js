@@ -71,6 +71,44 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, bucket: BUCKET_NAME, time: new Date().toISOString() });
 });
 
+function mimeForUrl(url, fallback = "image/png") {
+  const clean = String(url || "").split("?")[0].toLowerCase();
+  if (clean.endsWith(".jpg") || clean.endsWith(".jpeg")) return "image/jpeg";
+  if (clean.endsWith(".webp")) return "image/webp";
+  if (clean.endsWith(".gif")) return "image/gif";
+  if (clean.endsWith(".svg")) return "image/svg+xml";
+  return fallback;
+}
+
+async function inlineCanvasImages(canvasJson) {
+  const json = JSON.parse(JSON.stringify(canvasJson));
+  let inlinedImages = 0;
+  let inlinedBytes = 0;
+
+  const inlineObject = async (obj) => {
+    if (!obj || typeof obj !== "object") return;
+    const src = typeof obj.src === "string" ? obj.src : "";
+    const isRemoteImage = /^https?:\/\//i.test(src) && !/\.(mp4|mov|m4v|webm|ogg|ogv)(?:$|[?#])/i.test(src);
+    if (isRemoteImage) {
+      const response = await fetch(src, { redirect: "follow" });
+      if (!response.ok) throw new Error(`Could not fetch image layer (${response.status}): ${src.slice(0, 160)}`);
+      const contentType = response.headers.get("content-type") || mimeForUrl(src);
+      if (!contentType.startsWith("image/")) throw new Error(`Image layer returned ${contentType}: ${src.slice(0, 160)}`);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      obj.src = `data:${contentType};base64,${bytes.toString("base64")}`;
+      obj.crossOrigin = "anonymous";
+      inlinedImages += 1;
+      inlinedBytes += bytes.length;
+    }
+    await Promise.all((obj.objects || obj._objects || []).map(inlineObject));
+    if (obj.clipPath) await inlineObject(obj.clipPath);
+  };
+
+  await Promise.all((json.objects || []).map(inlineObject));
+  if (json.backgroundImage) await inlineObject(json.backgroundImage);
+  return { canvasJson: json, inlinedImages, inlinedBytes };
+}
+
 app.post("/render", authMiddleware, async (req, res) => {
   const { templateId, companyId, name, width, height, canvasJson } = req.body || {};
   if (!templateId || !companyId || !canvasJson || !width || !height) {
@@ -100,7 +138,13 @@ app.post("/render", authMiddleware, async (req, res) => {
       { merge: true },
     );
 
-    const png = await renderPng({ width, height, canvasJson });
+    const inlined = await inlineCanvasImages(canvasJson);
+    console.log("[/render] image sources prepared", {
+      templateId,
+      inlinedImages: inlined.inlinedImages,
+      inlinedBytes: inlined.inlinedBytes,
+    });
+    const png = await renderPng({ width, height, canvasJson: inlined.canvasJson });
 
     const ts = startedAt.toISOString().replace(/[:.]/g, "-");
     const latestPath = `rendered/${companyId}/${templateId}/latest.png`;
