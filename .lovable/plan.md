@@ -1,77 +1,44 @@
-## What we're building
+## Goal
+If a template contains a video object, publish the **whole canvas as a video file** (MP4 preferred, WebM fallback) instead of a single PNG. Templates without video keep using the existing PNG path.
 
-A full-suite image platform for digital signage:
-1. **Browser-based image editor** — crop/resize/rotate/flip, filters, text & annotations, signage size presets
-2. **Auto-optimizing compression** — picks best format (AVIF/WebP/JPEG) + quality per image
-3. **Cloud gallery** — store originals + compressed variants per user
-4. **Public API** — your signage webapp pulls images by ID/slug
-5. **Square integration** — design price-driven templates, auto-regenerate when Square prices change
-6. **Multi-user auth** — email/password + Google
+## Why MP4 isn't guaranteed
+Browser `MediaRecorder` only produces MP4 on Safari/Chrome (recent versions). Everywhere else it emits WebM. We will:
+1. Probe `MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')` first, then fall back to `video/webm;codecs=vp9` → `video/webm;codecs=vp8`.
+2. Upload the bytes with the correct extension + content-type. Firebase stores it as `latest.mp4` or `latest.webm` accordingly; the rendered Firestore doc records the actual mime type so the player can pick the right tag.
 
-## Architecture
+## Steps
 
-```text
-┌─────────────────┐    ┌──────────────────┐    ┌────────────────┐
-│  Editor UI      │───▶│  TanStack server │───▶│ Lovable Cloud  │
-│  (Canvas/Fabric)│    │  functions       │    │ (DB + Storage) │
-└─────────────────┘    └──────────────────┘    └────────────────┘
-                              │                        ▲
-                              ▼                        │
-                       ┌──────────────┐         ┌──────────────┐
-                       │ Square API   │         │ /api/public/ │
-                       │ (catalog)    │         │ images/:slug │
-                       └──────────────┘         └──────────────┘
-```
+### 1. Client — detect video and branch (`src/routes/_authenticated/templates.tsx`)
+- After `preparePublish`, walk `prep.canvasJson.objects` for any object with `videoStoragePath` or `src` ending in a video extension.
+- **No video** → existing PNG flow (unchanged).
+- **Has video** → new `recordTemplateVideo()`:
+  - Load Fabric `StaticCanvas` like today.
+  - For each video object: create an `HTMLVideoElement` (muted, playsInline, crossOrigin anonymous), wait for `loadeddata`, attach to the Fabric `FabricImage`, drive a RAF loop that calls `fc.requestRenderAll()` every frame.
+  - Determine `durationSec = max(video.duration)` across all videos, capped at 30s.
+  - `canvasEl.captureStream(30)` → `MediaRecorder` with the best supported mime.
+  - Start all videos + recorder, stop recorder when the longest video ends, resolve a Blob.
+  - Convert blob → base64 → call new `uploadRenderedVideo` server fn.
 
-## Tech choices
+### 2. Server fn (`src/lib/signage.functions.ts` + `src/lib/signage.server.ts`)
+- Add `uploadRenderedVideo` server fn: `{ templateId, videoBase64, mimeType, width, height, durationMs }`.
+- In `signage.server.ts`, mirror `uploadRenderedPng` → `uploadRenderedVideoToService`, POSTs to renderer `/upload-video`.
 
-- **Editor**: HTML Canvas with `fabric.js` (mature, supports text/shapes/filters/transforms)
-- **Compression**: client-side via `browser-image-compression` for first-pass; server-side `sharp`-equivalent via WASM (`@jsquash/avif`, `@jsquash/webp`, `@jsquash/jpeg`) since the Worker runtime can't run native sharp
-- **Auto-optimize**: encode to AVIF + WebP + JPEG, pick smallest under a quality threshold
-- **Auth**: Lovable Cloud (email/password + Google)
-- **Storage**: Lovable Cloud Storage bucket `images` (public read for served URLs, RLS write per user)
-- **DB tables**:
-  - `profiles` (user info)
-  - `images` (id, user_id, slug, title, original_path, variants jsonb, width, height, created_at)
-  - `templates` (id, user_id, name, canvas_json, square_bindings jsonb, signage_preset)
-  - `square_connections` (user_id, access_token encrypted, merchant_id, last_sync_at)
-  - `template_renders` (template_id, rendered_image_id, last_rendered_at, price_snapshot jsonb)
-- **Square**: per-user OAuth (since each user connects their own Square account). Square is not a Lovable connector — user pastes a Square access token (Personal Access Token from Square Dashboard) for v1 to keep scope sane. We'll build full OAuth later if needed.
-- **Auto-regenerate**: cron-style endpoint `/api/public/cron/sync-square` polls each user's Square catalog hourly, diffs prices, re-renders bound templates server-side via headless canvas (`@napi-rs/canvas` won't run on Worker → use `skia-canvas` WASM or render via the same fabric.js JSON in a server-side renderer like `node-canvas-webgl`). **Reality check**: server-side fabric rendering on Cloudflare Workers is fragile. Practical v1: render in browser when user opens template, OR via a scheduled client-side worker. I'll implement: when Square price changes detected, mark template "stale" + send notification; user clicks "regenerate" in UI which re-renders client-side and uploads.
+### 3. Renderer service (`renderer-service/server.js`)
+- New `POST /upload-video`: validates mime is `video/mp4` or `video/webm`, decodes base64, uploads to `rendered/{companyId}/{templateId}/latest.{ext}` + versioned, writes Firestore `{ status, downloadUrl, mimeType, width, height, durationMs, bytes }`.
+- Bump `RENDERER_VERSION` and update `assertRendererSupportsUpload` to accept either the old version or the new one (since older deployments will still serve PNG-only templates). Simpler: bump version and require redeploy — consistent with prior pattern.
+- Bump express body limit to handle ~30 MB videos (already at 60 MB, may raise to 120 MB).
 
-## Pages
+### 4. Skip server-side image normalization for video templates
+- `prepareTemplateForBrowserRender` already inlines images. For video objects we keep the signed URL (videos can't be base64-inlined cheaply); ensure `refreshCanvasMediaUrls` is video-aware — currently it only touches `imageStoragePath`/image `src`, so videos pass through. Add a parallel pass to refresh `videoStoragePath` → fresh signed URL on the object.
 
-- `/` — landing (marketing) → CTA to sign up
-- `/login`, `/signup`, `/reset-password`
-- `/_authenticated/dashboard` — gallery of all images with filters
-- `/_authenticated/editor/:id?` — full editor (new image or edit existing)
-- `/_authenticated/templates` — list of Square-bound templates
-- `/_authenticated/templates/:id` — template editor with Square item picker
-- `/_authenticated/settings` — Square token, account, API key for signage
-- `/api/public/images/:slug` — serve compressed image (auto-negotiates format via Accept header)
-- `/api/public/api/v1/images` — list images (Bearer API key auth)
-- `/api/public/cron/sync-square` — triggered hourly to check price changes
+## Technical notes
+- Video recording uses canvas-element `captureStream`, not Fabric internals — works with the same StaticCanvas.
+- MP4 in-browser without ffmpeg.wasm is only reliable when the browser supports MP4 MediaRecorder. We do not bundle ffmpeg.wasm (large, slow). User accepts WebM fallback.
+- Hard 30s cap to keep upload payload reasonable.
 
-## Build order
-
-1. Enable Lovable Cloud, set up auth (email + Google), create DB schema + RLS + storage bucket
-2. Landing page + auth pages (login/signup/reset)
-3. Dashboard + gallery shell
-4. Image editor with fabric.js (crop, resize, rotate, flip, filters, text, shapes, signage presets)
-5. Upload + auto-compression pipeline (client-side compression, server stores variants)
-6. Public API endpoints + per-user API keys
-7. Square integration: token storage, catalog browser, template designer with `{{item.price}}` bindings
-8. Stale-template detection + manual regenerate flow
-9. Polish, SEO, sitemap
-
-## Design direction
-
-Clean, professional SaaS — think Cloudinary meets Figma. Dark sidebar nav, light editor canvas. Will set up tokens in `src/styles.css`.
-
-## Notes & tradeoffs
-
-- **Square OAuth**: full OAuth flow requires registering an app with Square + storing client secret. v1 uses Personal Access Tokens to ship faster. I can add full OAuth in a follow-up.
-- **Server-side rendering of fabric templates**: deferred (see above). Templates regenerate client-side on demand when Square data changes.
-- **AVIF encoding**: WASM AVIF encoders are slow. We'll encode AVIF only for images >500KB; smaller ones get WebP only.
-
-This is a multi-day build broken into shippable chunks. I'll start with steps 1–4 in this turn (foundation + editor) and we iterate from there.
+## Files touched
+- `src/routes/_authenticated/templates.tsx` — branching + new `recordTemplateVideo`
+- `src/lib/signage.functions.ts` — new `uploadRenderedVideo` server fn
+- `src/lib/signage.server.ts` — new upload helper + refresh video signed URLs
+- `renderer-service/server.js` — new `/upload-video` endpoint, version bump
+- `renderer-service/README.md` — document new endpoint
