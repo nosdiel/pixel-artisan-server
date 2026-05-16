@@ -801,8 +801,7 @@ function EditorPage() {
         strokeWidth: 0,
         padding: 0,
       });
-      const cw = fc.getWidth();
-      const ch = fc.getHeight();
+      const { w: cw, h: ch } = getCanvasSize(preset);
       const iw = target.width!;
       const ih = target.height!;
       const scale = Math.min(cw / iw, ch / ih);
@@ -829,14 +828,17 @@ function EditorPage() {
     setSaving(true);
     try {
       fc.discardActiveObject();
+      const { w, h } = getCanvasSize(preset);
       const prevZoom = fc.getZoom();
       fc.setZoom(1);
-      fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
+      fc.setDimensions({ width: w, height: h });
+      fc.renderAll();
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
       const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
       fc.setZoom(prevZoom);
-      fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
+      fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
+      fc.setDimensions({ width: w * prevZoom, height: h * prevZoom }, { cssOnly: true });
 
       const blob = await (await fetch(dataUrl)).blob();
       const { best, variants, originalSize, width, height } = await autoCompress(blob);
