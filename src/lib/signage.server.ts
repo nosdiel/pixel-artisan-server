@@ -20,7 +20,7 @@ const PRESET_SIZES: Record<string, { w: number; h: number }> = {
 const REQUIRED_RENDERER_VERSION = "2026-05-16-browser-render-upload-blank-check";
 
 function rendererUpgradeMessage(actualVersion?: string | null) {
-  const actual = actualVersion ? ` Current /health rendererVersion is "${actual}".` : "";
+  const actual = actualVersion ? ` Current /health rendererVersion is "${actualVersion}".` : "";
   return `Renderer service is outdated: it does not support browser-side PNG upload at /upload.${actual} Redeploy renderer-service, then confirm /health reports rendererVersion "${REQUIRED_RENDERER_VERSION}".`;
 }
 
