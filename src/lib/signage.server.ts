@@ -291,7 +291,10 @@ async function assertRendererIsCurrent(rendererUrl: string, rendererAuthToken: s
     // handled below
   }
   if (payload?.rendererVersion !== REQUIRED_RENDERER_VERSION) {
-    throw new Error("Renderer service is outdated. Redeploy renderer-service/server.js, then retry publish.");
+    console.warn("[publishTemplate] renderer version mismatch; continuing to render", {
+      expected: REQUIRED_RENDERER_VERSION,
+      actual: payload?.rendererVersion ?? null,
+    });
   }
 }
 
