@@ -7,6 +7,9 @@
  */
 const express = require("express");
 const admin = require("firebase-admin");
+const fs = require("fs");
+const path = require("path");
+const zlib = require("zlib");
 
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
@@ -68,6 +71,74 @@ function decodePngPayload(input) {
   return buffer;
 }
 
+/**
+ * Decode the raw pixel stream from a PNG buffer enough to tell whether
+ * every pixel is pure white / fully transparent. We walk IDAT chunks,
+ * inflate them, then inspect each scanline's pixel bytes (skipping the
+ * 1-byte filter prefix). Supports the bit depths Fabric/browsers emit
+ * (8-bit RGB and 8-bit RGBA). Returns { blank, reason }.
+ */
+function isBlankPng(buffer) {
+  try {
+    let offset = 8; // skip PNG signature
+    let width = 0;
+    let height = 0;
+    let colorType = -1;
+    let bitDepth = 0;
+    const idatChunks = [];
+    while (offset < buffer.length) {
+      const len = buffer.readUInt32BE(offset);
+      const type = buffer.slice(offset + 4, offset + 8).toString("ascii");
+      const dataStart = offset + 8;
+      const dataEnd = dataStart + len;
+      if (type === "IHDR") {
+        width = buffer.readUInt32BE(dataStart);
+        height = buffer.readUInt32BE(dataStart + 4);
+        bitDepth = buffer[dataStart + 8];
+        colorType = buffer[dataStart + 9];
+      } else if (type === "IDAT") {
+        idatChunks.push(buffer.slice(dataStart, dataEnd));
+      } else if (type === "IEND") {
+        break;
+      }
+      offset = dataEnd + 4; // skip CRC
+    }
+    if (!width || !height || !idatChunks.length) {
+      return { blank: false, reason: "could not parse PNG" };
+    }
+    if (bitDepth !== 8 || (colorType !== 2 && colorType !== 6)) {
+      return { blank: false, reason: `unsupported PNG format (depth=${bitDepth} colorType=${colorType})` };
+    }
+    const channels = colorType === 6 ? 4 : 3;
+    const raw = zlib.inflateSync(Buffer.concat(idatChunks));
+    const stride = width * channels + 1;
+    let nonWhite = 0;
+    let sampled = 0;
+    for (let y = 0; y < height; y++) {
+      const rowStart = y * stride + 1; // skip filter byte
+      for (let x = 0; x < width; x++) {
+        const p = rowStart + x * channels;
+        const r = raw[p];
+        const g = raw[p + 1];
+        const b = raw[p + 2];
+        const a = channels === 4 ? raw[p + 3] : 255;
+        sampled++;
+        if (a !== 0 && (r < 250 || g < 250 || b < 250)) {
+          nonWhite++;
+          if (nonWhite > 50) return { blank: false, reason: null };
+        }
+      }
+    }
+    const ratio = sampled > 0 ? nonWhite / sampled : 0;
+    if (ratio < 0.0005) {
+      return { blank: true, reason: `nonWhiteRatio=${ratio.toFixed(6)} (${nonWhite}/${sampled})` };
+    }
+    return { blank: false, reason: null };
+  } catch (e) {
+    return { blank: false, reason: `blank-check failed: ${e.message}` };
+  }
+}
+
 async function uploadPng(buffer, path) {
   const file = bucket.file(path);
   await file.save(buffer, {
@@ -104,6 +175,40 @@ app.post("/upload", authMiddleware, async (req, res) => {
       buffer = decodePngPayload(pngBase64);
     } catch (e) {
       return res.status(400).json({ success: false, error: e.message });
+    }
+
+    // Persist the decoded PNG to disk for inspection before doing anything
+    // else. This makes "blank PNG" bugs trivially debuggable on the server.
+    const debugPath = path.join(__dirname, "debug-output.png");
+    try {
+      fs.writeFileSync(debugPath, buffer);
+      console.log(`[upload] wrote debug PNG to ${debugPath} (${buffer.length} bytes)`);
+    } catch (e) {
+      console.warn(`[upload] could not write ${debugPath}: ${e.message}`);
+    }
+
+    const blankCheck = isBlankPng(buffer);
+    console.log("[upload] blank check", blankCheck);
+    if (blankCheck.blank) {
+      await docRef
+        .set(
+          {
+            companyId,
+            templateId,
+            name: name || null,
+            status: "error",
+            error: `render produced blank image (${blankCheck.reason})`,
+            erroredAt: new Date(),
+          },
+          { merge: true },
+        )
+        .catch(() => {});
+      return res.status(422).json({
+        success: false,
+        error: "render produced blank image",
+        detail: blankCheck.reason,
+        debugPath,
+      });
     }
 
     await docRef.set(
