@@ -43,9 +43,19 @@ function extractImageStoragePath(src: string) {
   }
 }
 
+function mimeForStoragePath(path: string) {
+  const clean = path.toLowerCase().split("?")[0];
+  if (clean.endsWith(".jpg") || clean.endsWith(".jpeg")) return "image/jpeg";
+  if (clean.endsWith(".webp")) return "image/webp";
+  if (clean.endsWith(".gif")) return "image/gif";
+  if (clean.endsWith(".svg")) return "image/svg+xml";
+  return "image/png";
+}
+
 async function refreshCanvasMediaUrls(canvasJson: unknown) {
   const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
   let refreshedImages = 0;
+  let inlinedImageBytes = 0;
   const refreshObject = async (obj: any): Promise<void> => {
     if (!obj || typeof obj !== "object") return;
     const path = typeof obj.imageStoragePath === "string"
@@ -57,10 +67,17 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
       const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(path, 3600);
       if (error) throw new Error(`Could not refresh image URL for render: ${error.message}`);
       if (data?.signedUrl) {
-        obj.src = data.signedUrl;
+        const imageRes = await fetch(data.signedUrl, { redirect: "follow" });
+        if (!imageRes.ok) throw new Error(`Could not load image for render (${imageRes.status})`);
+        const contentType = imageRes.headers.get("content-type")?.startsWith("image/")
+          ? imageRes.headers.get("content-type")!
+          : mimeForStoragePath(path);
+        const bytes = Buffer.from(await imageRes.arrayBuffer());
+        obj.src = `data:${contentType};base64,${bytes.toString("base64")}`;
         obj.crossOrigin = "anonymous";
         obj.imageStoragePath = path;
         refreshedImages++;
+        inlinedImageBytes += bytes.length;
       }
     }
     await Promise.all(((obj.objects ?? obj._objects ?? []) as any[]).map(refreshObject));
@@ -68,7 +85,7 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
   };
   await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
   if (json.backgroundImage) await refreshObject(json.backgroundImage);
-  return { canvasJson: json, refreshedImages };
+  return { canvasJson: json, refreshedImages, inlinedImageBytes };
 }
 
 export async function checkRendererHealth(rendererUrl: string, rendererAuthToken: string | null): Promise<RendererHealthResponse> {
@@ -226,9 +243,9 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
   const renderHeight = presetSize?.h ?? tpl.height;
   const originalCanvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
   const objectCount = Array.isArray(originalCanvasJson?.objects) ? originalCanvasJson!.objects!.length : 0;
-  const { canvasJson, refreshedImages } = originalCanvasJson
+  const { canvasJson, refreshedImages, inlinedImageBytes } = originalCanvasJson
     ? await refreshCanvasMediaUrls(originalCanvasJson)
-    : { canvasJson: null, refreshedImages: 0 };
+    : { canvasJson: null, refreshedImages: 0, inlinedImageBytes: 0 };
   console.log("[publishTemplate]", {
     templateId: tpl.id,
     name: tpl.name,
@@ -239,6 +256,7 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
     hasCanvasJson: !!originalCanvasJson,
     objectCount,
     refreshedImages,
+    inlinedImageBytes,
     canvasJsonPreview: canvasJson ? JSON.stringify(canvasJson).slice(0, 300) : null,
   });
   if (!originalCanvasJson || objectCount === 0) {

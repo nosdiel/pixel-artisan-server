@@ -24,6 +24,7 @@ const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
 const CHROME_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH || "/usr/bin/google-chrome";
+const RENDERER_VERSION = "2026-05-16-inline-fabric-fallback";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
@@ -68,8 +69,46 @@ const app = express();
 app.use(express.json({ limit: "20mb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, bucket: BUCKET_NAME, time: new Date().toISOString() });
+  res.json({ ok: true, rendererVersion: RENDERER_VERSION, bucket: BUCKET_NAME, time: new Date().toISOString() });
 });
+
+function mimeForUrl(url, fallback = "image/png") {
+  const clean = String(url || "").split("?")[0].toLowerCase();
+  if (clean.endsWith(".jpg") || clean.endsWith(".jpeg")) return "image/jpeg";
+  if (clean.endsWith(".webp")) return "image/webp";
+  if (clean.endsWith(".gif")) return "image/gif";
+  if (clean.endsWith(".svg")) return "image/svg+xml";
+  return fallback;
+}
+
+async function inlineCanvasImages(canvasJson) {
+  const json = JSON.parse(JSON.stringify(canvasJson));
+  let inlinedImages = 0;
+  let inlinedBytes = 0;
+
+  const inlineObject = async (obj) => {
+    if (!obj || typeof obj !== "object") return;
+    const src = typeof obj.src === "string" ? obj.src : "";
+    const isRemoteImage = /^https?:\/\//i.test(src) && !/\.(mp4|mov|m4v|webm|ogg|ogv)(?:$|[?#])/i.test(src);
+    if (isRemoteImage) {
+      const response = await fetch(src, { redirect: "follow" });
+      if (!response.ok) throw new Error(`Could not fetch image layer (${response.status}): ${src.slice(0, 160)}`);
+      const contentType = response.headers.get("content-type") || mimeForUrl(src);
+      if (!contentType.startsWith("image/")) throw new Error(`Image layer returned ${contentType}: ${src.slice(0, 160)}`);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      obj.src = `data:${contentType};base64,${bytes.toString("base64")}`;
+      obj.crossOrigin = "anonymous";
+      inlinedImages += 1;
+      inlinedBytes += bytes.length;
+    }
+    await Promise.all((obj.objects || obj._objects || []).map(inlineObject));
+    if (obj.clipPath) await inlineObject(obj.clipPath);
+  };
+
+  await Promise.all((json.objects || []).map(inlineObject));
+  if (json.backgroundImage) await inlineObject(json.backgroundImage);
+  return { canvasJson: json, inlinedImages, inlinedBytes };
+}
 
 app.post("/render", authMiddleware, async (req, res) => {
   const { templateId, companyId, name, width, height, canvasJson } = req.body || {};
@@ -100,7 +139,13 @@ app.post("/render", authMiddleware, async (req, res) => {
       { merge: true },
     );
 
-    const png = await renderPng({ width, height, canvasJson });
+    const inlined = await inlineCanvasImages(canvasJson);
+    console.log("[/render] image sources prepared", {
+      templateId,
+      inlinedImages: inlined.inlinedImages,
+      inlinedBytes: inlined.inlinedBytes,
+    });
+    const png = await renderPng({ width, height, canvasJson: inlined.canvasJson });
 
     const ts = startedAt.toISOString().replace(/[:.]/g, "-");
     const latestPath = `rendered/${companyId}/${templateId}/latest.png`;
@@ -179,7 +224,10 @@ async function renderPng({ width, height, canvasJson }) {
         await new Promise((resolve) => canvas.loadFromJSON(json, resolve));
       }
 
-      const imageObjects = canvas.getObjects().filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
+      const allObjects = canvas.getObjects();
+      if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
+
+      const imageObjects = allObjects.filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
       await Promise.all(
         imageObjects.map((obj) => {
           const el = typeof obj.getElement === "function" ? obj.getElement() : null;
@@ -196,6 +244,15 @@ async function renderPng({ width, height, canvasJson }) {
         .filter(({ el }) => el && el.tagName === "IMG" && (!el.naturalWidth || !el.naturalHeight))
         .map(({ src }) => String(src || "unknown").slice(0, 160));
       if (failedImages.length) throw new Error(`Image layer failed to load: ${failedImages.join(", ")}`);
+
+      const visibleObjects = allObjects.filter((obj) => obj.visible !== false && (obj.opacity ?? 1) > 0);
+      const visibleOnCanvas = visibleObjects.filter((obj) => {
+        const bounds = obj.getBoundingRect ? obj.getBoundingRect() : obj;
+        return bounds.left < renderWidth && bounds.top < renderHeight && bounds.left + bounds.width > 0 && bounds.top + bounds.height > 0;
+      });
+      if (visibleOnCanvas.length === 0) {
+        throw new Error("Fabric loaded objects, but none are visible within the render canvas");
+      }
 
       // Wait for any <img> resources referenced by fabric objects to finish loading
       const imgs = Array.from(document.images || []);
@@ -219,9 +276,10 @@ async function renderPng({ width, height, canvasJson }) {
 
       const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
       return {
-        loadedCount: canvas.getObjects().length,
+        loadedCount: allObjects.length,
+        visibleOnCanvasCount: visibleOnCanvas.length,
         dataUrl,
-        objectSummary: canvas.getObjects().map((obj) => ({
+        objectSummary: allObjects.map((obj) => ({
           type: obj.type,
           left: obj.left,
           top: obj.top,
@@ -235,6 +293,7 @@ async function renderPng({ width, height, canvasJson }) {
     }, canvasJson, width, height);
     console.log("[/render] fabric canvas ready", {
       loadedCount: renderInfo.loadedCount,
+      visibleOnCanvasCount: renderInfo.visibleOnCanvasCount,
       objectSummary: renderInfo.objectSummary,
       dataUrlBytes: renderInfo.dataUrl.length,
     });
