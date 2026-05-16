@@ -214,13 +214,16 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
 
   const { data: tpl, error: tplErr } = await supabaseAdmin
     .from("templates")
-    .select("id, name, width, height, canvas_json, square_bindings")
+    .select("id, name, preset, width, height, canvas_json, square_bindings")
     .eq("id", templateId)
     .eq("user_id", userId)
     .maybeSingle();
   if (tplErr) throw new Error(tplErr.message);
   if (!tpl) throw new Error("Template not found");
 
+  const presetSize = typeof tpl.preset === "string" ? PRESET_SIZES[tpl.preset] : undefined;
+  const renderWidth = presetSize?.w ?? tpl.width;
+  const renderHeight = presetSize?.h ?? tpl.height;
   const originalCanvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
   const objectCount = Array.isArray(originalCanvasJson?.objects) ? originalCanvasJson!.objects!.length : 0;
   const { canvasJson, refreshedImages } = originalCanvasJson
@@ -229,8 +232,10 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
   console.log("[publishTemplate]", {
     templateId: tpl.id,
     name: tpl.name,
-    width: tpl.width,
-    height: tpl.height,
+    width: renderWidth,
+    height: renderHeight,
+    savedWidth: tpl.width,
+    savedHeight: tpl.height,
     hasCanvasJson: !!originalCanvasJson,
     objectCount,
     refreshedImages,
@@ -269,8 +274,8 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
         templateId: tpl.id,
         companyId: settings.company_id,
         name: tpl.name,
-        width: tpl.width,
-        height: tpl.height,
+        width: renderWidth,
+        height: renderHeight,
         canvasJson,
         squareData,
       },
