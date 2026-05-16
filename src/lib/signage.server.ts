@@ -212,18 +212,22 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
   if (tplErr) throw new Error(tplErr.message);
   if (!tpl) throw new Error("Template not found");
 
-  const canvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
-  const objectCount = Array.isArray(canvasJson?.objects) ? canvasJson!.objects!.length : 0;
+  const originalCanvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
+  const objectCount = Array.isArray(originalCanvasJson?.objects) ? originalCanvasJson!.objects!.length : 0;
+  const { canvasJson, refreshedImages } = originalCanvasJson
+    ? await refreshCanvasMediaUrls(originalCanvasJson)
+    : { canvasJson: null, refreshedImages: 0 };
   console.log("[publishTemplate]", {
     templateId: tpl.id,
     name: tpl.name,
     width: tpl.width,
     height: tpl.height,
-    hasCanvasJson: !!canvasJson,
+    hasCanvasJson: !!originalCanvasJson,
     objectCount,
+    refreshedImages,
     canvasJsonPreview: canvasJson ? JSON.stringify(canvasJson).slice(0, 300) : null,
   });
-  if (!canvasJson || objectCount === 0) {
+  if (!originalCanvasJson || objectCount === 0) {
     const msg = "Template has no objects.";
     await supabaseAdmin
       .from("templates")
@@ -258,7 +262,7 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
         name: tpl.name,
         width: tpl.width,
         height: tpl.height,
-        canvasJson: tpl.canvas_json,
+        canvasJson,
         squareData,
       },
     });
