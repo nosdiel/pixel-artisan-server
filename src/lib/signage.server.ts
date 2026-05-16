@@ -243,9 +243,9 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
   const renderHeight = presetSize?.h ?? tpl.height;
   const originalCanvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
   const objectCount = Array.isArray(originalCanvasJson?.objects) ? originalCanvasJson!.objects!.length : 0;
-  const { canvasJson, refreshedImages } = originalCanvasJson
+  const { canvasJson, refreshedImages, inlinedImageBytes } = originalCanvasJson
     ? await refreshCanvasMediaUrls(originalCanvasJson)
-    : { canvasJson: null, refreshedImages: 0 };
+    : { canvasJson: null, refreshedImages: 0, inlinedImageBytes: 0 };
   console.log("[publishTemplate]", {
     templateId: tpl.id,
     name: tpl.name,
@@ -256,6 +256,7 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
     hasCanvasJson: !!originalCanvasJson,
     objectCount,
     refreshedImages,
+    inlinedImageBytes,
     canvasJsonPreview: canvasJson ? JSON.stringify(canvasJson).slice(0, 300) : null,
   });
   if (!originalCanvasJson || objectCount === 0) {
