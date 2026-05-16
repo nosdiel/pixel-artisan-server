@@ -24,6 +24,7 @@ const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
 const CHROME_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH || "/usr/bin/google-chrome";
+const RENDERER_VERSION = "2026-05-16-inline-fabric-fallback";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
@@ -68,7 +69,7 @@ const app = express();
 app.use(express.json({ limit: "20mb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, bucket: BUCKET_NAME, time: new Date().toISOString() });
+  res.json({ ok: true, rendererVersion: RENDERER_VERSION, bucket: BUCKET_NAME, time: new Date().toISOString() });
 });
 
 function mimeForUrl(url, fallback = "image/png") {
