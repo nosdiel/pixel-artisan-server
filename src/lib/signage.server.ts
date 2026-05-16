@@ -1,5 +1,4 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { inflateSync } from "node:zlib";
 
 export type RendererSettings = {
   user_id: string;
@@ -178,7 +177,7 @@ function paethPredictor(a: number, b: number, c: number) {
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
-function isBlankWhitePng(bytes: Uint8Array) {
+async function isBlankWhitePng(bytes: Uint8Array) {
   const signature = [137, 80, 78, 71, 13, 10, 26, 10];
   if (!signature.every((n, i) => bytes[i] === n)) return false;
 
@@ -214,6 +213,7 @@ function isBlankWhitePng(bytes: Uint8Array) {
   const bpp = colorType === 6 ? 4 : colorType === 2 ? 3 : colorType === 4 ? 2 : colorType === 0 ? 1 : 0;
   if (!width || !height || bitDepth !== 8 || interlace !== 0 || !bpp || !idat.length) return false;
 
+  const { inflateSync } = await import("node:zlib");
   const inflated = inflateSync(Buffer.concat(idat));
   const stride = width * bpp;
   let src = 0;
@@ -251,7 +251,7 @@ async function assertRenderedPngHasContent(downloadUrl: string | undefined) {
   const res = await fetch(downloadUrl, { redirect: "follow" });
   if (!res.ok) throw new Error(`Could not verify rendered PNG (${res.status})`);
   const bytes = new Uint8Array(await res.arrayBuffer());
-  if (isBlankWhitePng(bytes)) {
+  if (await isBlankWhitePng(bytes)) {
     throw new Error("Renderer returned a blank white PNG. The configured renderer is still running broken render code; redeploy renderer-service/server.js and retry.");
   }
 }
