@@ -43,6 +43,40 @@ function formatPrice(cents: number | null, currency: string | null) {
   }).format(cents / 100);
 }
 
+function isVideoSrc(src: unknown): src is string {
+  if (typeof src !== "string") return false;
+  return /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i.test(src);
+}
+
+function canvasJsonHasVideo(canvasJson: unknown): boolean {
+  const visit = (obj: any): boolean => {
+    if (!obj || typeof obj !== "object") return false;
+    if (typeof obj.videoStoragePath === "string" && obj.videoStoragePath) return true;
+    if (typeof obj.videoSrc === "string" && obj.videoSrc) return true;
+    if (isVideoSrc(obj.src)) return true;
+    const children = (obj.objects ?? obj._objects ?? []) as any[];
+    for (const c of children) if (visit(c)) return true;
+    if (obj.clipPath && visit(obj.clipPath)) return true;
+    return false;
+  };
+  const root = canvasJson as any;
+  for (const o of (root?.objects ?? []) as any[]) if (visit(o)) return true;
+  return false;
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function TemplatesPage() {
   const qc = useQueryClient();
   const fetchItems = useServerFn(listSquareItems);
