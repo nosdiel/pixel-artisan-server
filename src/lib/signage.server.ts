@@ -22,6 +22,55 @@ export type RendererHealthResponse = {
   body: string;
 };
 
+const PRESET_SIZES: Record<string, { w: number; h: number }> = {
+  "1920x1080": { w: 1920, h: 1080 },
+  "3840x2160": { w: 3840, h: 2160 },
+  "1080x1920": { w: 1080, h: 1920 },
+  "2160x3840": { w: 2160, h: 3840 },
+  "1280x720": { w: 1280, h: 720 },
+  "1080x1080": { w: 1080, h: 1080 },
+};
+
+function extractImageStoragePath(src: string) {
+  try {
+    const url = new URL(src);
+    const markers = ["/storage/v1/object/sign/images/", "/storage/v1/object/public/images/"];
+    const marker = markers.find((m) => url.pathname.includes(m));
+    if (!marker) return null;
+    return decodeURIComponent(url.pathname.slice(url.pathname.indexOf(marker) + marker.length));
+  } catch {
+    return null;
+  }
+}
+
+async function refreshCanvasMediaUrls(canvasJson: unknown) {
+  const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
+  let refreshedImages = 0;
+  const refreshObject = async (obj: any): Promise<void> => {
+    if (!obj || typeof obj !== "object") return;
+    const path = typeof obj.imageStoragePath === "string"
+      ? obj.imageStoragePath
+      : typeof obj.src === "string"
+        ? extractImageStoragePath(obj.src)
+        : null;
+    if (path) {
+      const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(path, 3600);
+      if (error) throw new Error(`Could not refresh image URL for render: ${error.message}`);
+      if (data?.signedUrl) {
+        obj.src = data.signedUrl;
+        obj.crossOrigin = "anonymous";
+        obj.imageStoragePath = path;
+        refreshedImages++;
+      }
+    }
+    await Promise.all(((obj.objects ?? obj._objects ?? []) as any[]).map(refreshObject));
+    if (obj.clipPath) await refreshObject(obj.clipPath);
+  };
+  await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
+  if (json.backgroundImage) await refreshObject(json.backgroundImage);
+  return { canvasJson: json, refreshedImages };
+}
+
 export async function checkRendererHealth(rendererUrl: string, rendererAuthToken: string | null): Promise<RendererHealthResponse> {
   const url = rendererUrl.replace(/\/+$/, "") + "/health";
   const parsed = new URL(url);
@@ -165,25 +214,34 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
 
   const { data: tpl, error: tplErr } = await supabaseAdmin
     .from("templates")
-    .select("id, name, width, height, canvas_json, square_bindings")
+    .select("id, name, preset, width, height, canvas_json, square_bindings")
     .eq("id", templateId)
     .eq("user_id", userId)
     .maybeSingle();
   if (tplErr) throw new Error(tplErr.message);
   if (!tpl) throw new Error("Template not found");
 
-  const canvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
-  const objectCount = Array.isArray(canvasJson?.objects) ? canvasJson!.objects!.length : 0;
+  const presetSize = typeof tpl.preset === "string" ? PRESET_SIZES[tpl.preset] : undefined;
+  const renderWidth = presetSize?.w ?? tpl.width;
+  const renderHeight = presetSize?.h ?? tpl.height;
+  const originalCanvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
+  const objectCount = Array.isArray(originalCanvasJson?.objects) ? originalCanvasJson!.objects!.length : 0;
+  const { canvasJson, refreshedImages } = originalCanvasJson
+    ? await refreshCanvasMediaUrls(originalCanvasJson)
+    : { canvasJson: null, refreshedImages: 0 };
   console.log("[publishTemplate]", {
     templateId: tpl.id,
     name: tpl.name,
-    width: tpl.width,
-    height: tpl.height,
-    hasCanvasJson: !!canvasJson,
+    width: renderWidth,
+    height: renderHeight,
+    savedWidth: tpl.width,
+    savedHeight: tpl.height,
+    hasCanvasJson: !!originalCanvasJson,
     objectCount,
+    refreshedImages,
     canvasJsonPreview: canvasJson ? JSON.stringify(canvasJson).slice(0, 300) : null,
   });
-  if (!canvasJson || objectCount === 0) {
+  if (!originalCanvasJson || objectCount === 0) {
     const msg = "Template has no objects.";
     await supabaseAdmin
       .from("templates")
@@ -216,9 +274,9 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
         templateId: tpl.id,
         companyId: settings.company_id,
         name: tpl.name,
-        width: tpl.width,
-        height: tpl.height,
-        canvasJson: tpl.canvas_json,
+        width: renderWidth,
+        height: renderHeight,
+        canvasJson,
         squareData,
       },
     });

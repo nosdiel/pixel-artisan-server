@@ -141,6 +141,13 @@ async function renderPng({ width, height, canvasJson }) {
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
+    page.on("console", (msg) => console.log("[renderer-page]", msg.text()));
+    page.on("pageerror", (err) => console.error("[renderer-page-error]", err));
+    page.on("requestfailed", (req) => {
+      if (req.resourceType() === "image" || req.resourceType() === "font") {
+        console.error("[renderer-request-failed]", req.resourceType(), req.url(), req.failure()?.errorText);
+      }
+    });
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       html,body{margin:0;padding:0;background:transparent}
@@ -152,10 +159,16 @@ async function renderPng({ width, height, canvasJson }) {
     </body></html>`;
     await page.setContent(html, { waitUntil: "networkidle0" });
 
-    const loadedCount = await page.evaluate(async (json) => {
+    const renderInfo = await page.evaluate(async (json, renderWidth, renderHeight) => {
       const fabric = window.fabric;
       if (!fabric) throw new Error("Fabric.js failed to load from CDN");
-      const canvas = new fabric.Canvas("c", { enableRetinaScaling: false });
+      const canvas = new fabric.StaticCanvas("c", {
+        width: renderWidth,
+        height: renderHeight,
+        enableRetinaScaling: false,
+        backgroundColor: json.background || "#ffffff",
+        renderOnAddRemove: false,
+      });
 
       // Fabric v6: loadFromJSON returns a Promise
       const result = canvas.loadFromJSON(json);
@@ -164,6 +177,24 @@ async function renderPng({ width, height, canvasJson }) {
       } else {
         await new Promise((resolve) => canvas.loadFromJSON(json, resolve));
       }
+
+      const imageObjects = canvas.getObjects().filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
+      await Promise.all(
+        imageObjects.map((obj) => {
+          const el = typeof obj.getElement === "function" ? obj.getElement() : null;
+          if (!el || el.tagName !== "IMG" || el.complete) return Promise.resolve();
+          return new Promise((resolve) => { el.onload = el.onerror = resolve; });
+        }),
+      );
+      const failedImages = imageObjects
+        .map((obj) => {
+          const el = typeof obj.getElement === "function" ? obj.getElement() : null;
+          const src = typeof obj.getSrc === "function" ? obj.getSrc() : obj.src;
+          return { el, src };
+        })
+        .filter(({ el }) => el && el.tagName === "IMG" && (!el.naturalWidth || !el.naturalHeight))
+        .map(({ src }) => String(src || "unknown").slice(0, 160));
+      if (failedImages.length) throw new Error(`Image layer failed to load: ${failedImages.join(", ")}`);
 
       // Wait for any <img> resources referenced by fabric objects to finish loading
       const imgs = Array.from(document.images || []);
@@ -185,9 +216,21 @@ async function renderPng({ width, height, canvasJson }) {
       await new Promise((r) => setTimeout(r, 100));
       canvas.renderAll();
 
-      return canvas.getObjects().length;
-    }, canvasJson);
-    console.log(`[/render] fabric loaded ${loadedCount} objects on canvas`);
+      return {
+        loadedCount: canvas.getObjects().length,
+        objectSummary: canvas.getObjects().map((obj) => ({
+          type: obj.type,
+          left: obj.left,
+          top: obj.top,
+          width: obj.width,
+          height: obj.height,
+          scaleX: obj.scaleX,
+          scaleY: obj.scaleY,
+          visible: obj.visible,
+        })),
+      };
+    }, canvasJson, width, height);
+    console.log("[/render] fabric canvas ready", renderInfo);
 
     const buf = await page.screenshot({ type: "png", omitBackground: false, clip: { x: 0, y: 0, width, height } });
     return buf;

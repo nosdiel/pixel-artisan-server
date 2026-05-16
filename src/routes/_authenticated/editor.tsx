@@ -42,6 +42,10 @@ type SquareCacheItem = { square_item_id: string; name: string | null; descriptio
 type SquareField = "price" | "name" | "description";
 type SquareBinding = { itemId: string; field: SquareField };
 
+function getCanvasSize(presetKey: string) {
+  return PRESETS[presetKey] ?? PRESETS["1920x1080"];
+}
+
 function formatSquareValue(item: SquareCacheItem | undefined, field: SquareField): string {
   if (!item) return "";
   if (field === "name") return item.name ?? "";
@@ -139,7 +143,7 @@ function EditorPage() {
 
   const getFitZoom = useCallback((presetKey = preset) => {
     const host = canvasHostRef.current;
-    const { w, h } = PRESETS[presetKey];
+    const { w, h } = getCanvasSize(presetKey);
     if (!host) return Math.min(0.4, 720 / h, 900 / w);
     const availableWidth = Math.max(host.clientWidth - 64, 320);
     const availableHeight = Math.max(host.clientHeight - 64, 320);
@@ -251,10 +255,11 @@ function EditorPage() {
   // Initialize canvas
   useEffect(() => {
     if (!fabric || !canvasRef.current) return;
-    const { w, h } = PRESETS[preset];
+    const { w, h } = getCanvasSize(preset);
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
     const fittedZoom = getFitZoom(preset);
+    fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
     fc.setZoom(fittedZoom);
     fc.setDimensions({ width: w * fittedZoom, height: h * fittedZoom }, { cssOnly: true });
     setZoom(fittedZoom);
@@ -483,11 +488,12 @@ function EditorPage() {
         fc.clear();
         fc.backgroundColor = bgColor;
         const img = await fabric.FabricImage.fromURL(pendingBaseImage.url, { crossOrigin: "anonymous" });
-        const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!);
+        const { w, h } = getCanvasSize(preset);
+        const scale = Math.min(w / img.width!, h / img.height!);
         img.scale(scale);
         img.set({
-          left: (fc.width! - img.width! * scale) / 2,
-          top: (fc.height! - img.height! * scale) / 2,
+          left: (w - img.width! * scale) / 2,
+          top: (h - img.height! * scale) / 2,
           selectable: true,
           imageStoragePath: pendingBaseImage.path,
         });
@@ -511,9 +517,10 @@ function EditorPage() {
   useEffect(() => {
     const fc = fcRef.current;
     if (!fc) return;
-    const { w, h } = PRESETS[preset];
+    const { w, h } = getCanvasSize(preset);
     fc.setZoom(zoom);
-    fc.setDimensions({ width: w * zoom, height: h * zoom });
+    fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
+    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
     fc.requestRenderAll();
   }, [zoom, preset]);
 
@@ -625,10 +632,11 @@ function EditorPage() {
   const addImageFromUrl = async (url: string, path?: string) => {
     const fc = fcRef.current; if (!fc || !fabric) return;
     const img = await fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-    const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
+    const { w, h } = getCanvasSize(preset);
+    const max = Math.min(w * 0.6, h * 0.6);
     const scale = Math.min(max / img.width!, max / img.height!, 1);
     img.scale(scale);
-    img.set({ left: (fc.width! - img.width! * scale) / 2, top: (fc.height! - img.height! * scale) / 2 });
+    img.set({ left: (w - img.width! * scale) / 2, top: (h - img.height! * scale) / 2 });
     if (path) img.set("imageStoragePath", path);
     fc.add(img); fc.setActiveObject(img); fc.renderAll();
   };
@@ -693,12 +701,13 @@ function EditorPage() {
     video.width = vw;
     video.height = vh;
     const img = new fabric.FabricImage(video, { objectCaching: false, width: vw, height: vh });
-    const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
+    const { w, h } = getCanvasSize(preset);
+    const max = Math.min(w * 0.6, h * 0.6);
     const scale = Math.min(max / vw, max / vh, 1);
     img.scale(scale);
     img.set({
-      left: (fc.width! - vw * scale) / 2,
-      top: (fc.height! - vh * scale) / 2,
+      left: (w - vw * scale) / 2,
+      top: (h - vh * scale) / 2,
     });
     if (path) img.set("videoStoragePath", path);
     fc.add(img); fc.setActiveObject(img); fc.requestRenderAll();
@@ -738,15 +747,17 @@ function EditorPage() {
   };
   const addText = () => {
     const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
     const t = new fabric.IText("Your text", {
-      left: fc.width! / 2 - 200, top: fc.height! / 2 - 40, fontSize: 80, fill: "#111827",
+      left: w / 2 - 200, top: h / 2 - 40, fontSize: 80, fill: "#111827",
       fontFamily: "Inter", originX: "left", originY: "top",
     });
     fc.add(t); fc.setActiveObject(t); fc.renderAll();
   };
   const addShape = (kind: "rect" | "circle" | "triangle") => {
     const fc = fcRef.current; if (!fc || !fabric) return;
-    const common = { left: fc.width! / 2 - 150, top: fc.height! / 2 - 150, fill: "#3b82f6" };
+    const { w, h } = getCanvasSize(preset);
+    const common = { left: w / 2 - 150, top: h / 2 - 150, fill: "#3b82f6" };
     let o: Fabric.Object;
     if (kind === "rect") o = new fabric.Rect({ ...common, width: 300, height: 200 });
     else if (kind === "circle") o = new fabric.Circle({ ...common, radius: 120 });
@@ -791,8 +802,7 @@ function EditorPage() {
         strokeWidth: 0,
         padding: 0,
       });
-      const cw = fc.getWidth();
-      const ch = fc.getHeight();
+      const { w: cw, h: ch } = getCanvasSize(preset);
       const iw = target.width!;
       const ih = target.height!;
       const scale = Math.min(cw / iw, ch / ih);
@@ -819,17 +829,20 @@ function EditorPage() {
     setSaving(true);
     try {
       fc.discardActiveObject();
+      const { w, h } = getCanvasSize(preset);
       const prevZoom = fc.getZoom();
       fc.setZoom(1);
-      fc.setDimensions({ width: fc.width!, height: fc.height! }, { cssOnly: true });
+      fc.setDimensions({ width: w, height: h });
+      fc.renderAll();
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
       const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
       fc.setZoom(prevZoom);
-      fc.setDimensions({ width: fc.width! * prevZoom, height: fc.height! * prevZoom }, { cssOnly: true });
+      fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
+      fc.setDimensions({ width: w * prevZoom, height: h * prevZoom }, { cssOnly: true });
 
       const blob = await (await fetch(dataUrl)).blob();
-      const { best, variants, originalSize, width, height } = await autoCompress(blob);
+      const { best, variants, originalSize, width: imageWidth, height: imageHeight } = await autoCompress(blob);
       const { data: ud } = await supabase.auth.getUser();
       const userId = ud.user!.id;
 
@@ -839,8 +852,8 @@ function EditorPage() {
         user_id: userId,
         name: title,
         preset,
-        width,
-        height,
+        width: w,
+        height: h,
         canvas_json: JSON.parse(JSON.stringify(canvasJson)),
       };
       if (savedTemplateId) {
@@ -884,7 +897,7 @@ function EditorPage() {
       variantRecords.sort((x, y) => x.size - y.size);
 
       const imagePayload = {
-        user_id: userId, slug, title, width, height,
+        user_id: userId, slug, title, width: imageWidth, height: imageHeight,
         original_size_bytes: originalSize, optimized_size_bytes: best.size,
         variants: variantRecords, preset, source: "editor",
         template_id: savedTemplateId,
