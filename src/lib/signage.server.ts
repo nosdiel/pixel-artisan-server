@@ -387,6 +387,7 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
     });
 
     if (!result.success) throw new Error(result.error || "Renderer returned success=false");
+    await assertRenderedPngHasContent(result.downloadUrl);
 
     await supabaseAdmin
       .from("templates")
