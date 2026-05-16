@@ -1,12 +1,12 @@
 # Signage Renderer Service
 
-Standalone Node + Puppeteer service that the Lovable app calls to render
-templates to PNG, upload to Firebase Storage, and update Firestore.
+Standalone Node upload service that receives browser-rendered template PNGs,
+uploads them to Firebase Storage, and updates Firestore.
 
 ## Endpoints
 
-- `GET /health` — liveness probe (used by the "Test renderer" button in Settings). Must return `rendererVersion: "2026-05-16-fabric7-node"` after deploying this fix.
-- `POST /render` — body `{ templateId, companyId, name, width, height, canvasJson, squareData }`.
+- `GET /health` — liveness probe (used by the "Test renderer" button in Settings). Must return `rendererVersion: "2026-05-16-browser-render-upload-blank-check"` after deploying this fix.
+- `POST /upload` — body `{ templateId, companyId, name, width, height, pngBase64 }`.
   Returns `{ success, downloadUrl }`.
 
 ## Environment variables
@@ -16,7 +16,6 @@ templates to PNG, upload to Firebase Storage, and update Firestore.
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | yes | Full service account JSON (single line) from Firebase Console → Project Settings → Service Accounts. |
 | `FIREBASE_STORAGE_BUCKET` | yes | e.g. `my-project.appspot.com` |
 | `AUTH_TOKEN` | recommended | Shared secret. If set, requests must send `Authorization: Bearer <AUTH_TOKEN>`. Paste the same value in the Lovable app's Settings → Signage publishing. |
-| `PUPPETEER_EXECUTABLE_PATH` | no | Defaults to `/usr/bin/google-chrome` in the included Docker image. Set this if your host installs Chrome elsewhere. |
 | `PORT` | no | Defaults to `8080`. |
 
 ## Storage layout
@@ -52,8 +51,8 @@ cd renderer-service
 gcloud run deploy signage-renderer \
   --source . \
   --region us-central1 \
-  --memory 2Gi \
-  --cpu 2 \
+  --memory 512Mi \
+  --cpu 1 \
   --timeout 120 \
   --set-env-vars "FIREBASE_STORAGE_BUCKET=my-project.appspot.com,AUTH_TOKEN=some-long-random-string" \
   --set-secrets "FIREBASE_SERVICE_ACCOUNT_JSON=firebase-sa:latest" \
@@ -63,9 +62,8 @@ gcloud run deploy signage-renderer \
 (Store the service account JSON in Secret Manager as `firebase-sa`.)
 
 Render/Fly/Railway also work — point them at the included `Dockerfile`.
-If you deploy without the Dockerfile, make sure Chrome and its Linux libraries are installed; otherwise publish can fail with errors like `libatk-1.0.so.0: cannot open shared object file`.
 
 ## Verify deployment
 
 After redeploying, open `/health` on the renderer URL. If the response does not include
-`"rendererVersion":"2026-05-16-fabric7-node"`, the app is still calling old render code that can upload blank white PNGs.
+`"rendererVersion":"2026-05-16-browser-render-upload-blank-check"`, the app is still calling old render code that does not support `/upload`.
