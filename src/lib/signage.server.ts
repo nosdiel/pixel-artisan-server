@@ -22,6 +22,46 @@ export type RendererHealthResponse = {
   body: string;
 };
 
+function extractImageStoragePath(src: string) {
+  try {
+    const url = new URL(src);
+    const markers = ["/storage/v1/object/sign/images/", "/storage/v1/object/public/images/"];
+    const marker = markers.find((m) => url.pathname.includes(m));
+    if (!marker) return null;
+    return decodeURIComponent(url.pathname.slice(url.pathname.indexOf(marker) + marker.length));
+  } catch {
+    return null;
+  }
+}
+
+async function refreshCanvasMediaUrls(canvasJson: unknown) {
+  const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
+  let refreshedImages = 0;
+  const refreshObject = async (obj: any): Promise<void> => {
+    if (!obj || typeof obj !== "object") return;
+    const path = typeof obj.imageStoragePath === "string"
+      ? obj.imageStoragePath
+      : typeof obj.src === "string"
+        ? extractImageStoragePath(obj.src)
+        : null;
+    if (path) {
+      const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(path, 3600);
+      if (error) throw new Error(`Could not refresh image URL for render: ${error.message}`);
+      if (data?.signedUrl) {
+        obj.src = data.signedUrl;
+        obj.crossOrigin = "anonymous";
+        obj.imageStoragePath = path;
+        refreshedImages++;
+      }
+    }
+    await Promise.all(((obj.objects ?? obj._objects ?? []) as any[]).map(refreshObject));
+    if (obj.clipPath) await refreshObject(obj.clipPath);
+  };
+  await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
+  if (json.backgroundImage) await refreshObject(json.backgroundImage);
+  return { canvasJson: json, refreshedImages };
+}
+
 export async function checkRendererHealth(rendererUrl: string, rendererAuthToken: string | null): Promise<RendererHealthResponse> {
   const url = rendererUrl.replace(/\/+$/, "") + "/health";
   const parsed = new URL(url);
