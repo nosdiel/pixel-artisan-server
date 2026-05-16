@@ -17,7 +17,37 @@ const PRESET_SIZES: Record<string, { w: number; h: number }> = {
   "1080x1080": { w: 1080, h: 1080 },
 };
 
-const REQUIRED_RENDERER_VERSION = "2026-05-16-browser-render-upload";
+const REQUIRED_RENDERER_VERSION = "2026-05-16-browser-render-upload-blank-check";
+
+function rendererUpgradeMessage(actualVersion?: string | null) {
+  const actual = actualVersion ? ` Current /health rendererVersion is "${actualVersion}".` : "";
+  return `Renderer service is outdated: it does not support browser-side PNG upload at /upload.${actual} Redeploy renderer-service, then confirm /health reports rendererVersion "${REQUIRED_RENDERER_VERSION}".`;
+}
+
+async function assertRendererSupportsUpload(rendererUrl: string, rendererAuthToken: string | null) {
+  let health: RendererHealthResponse;
+  try {
+    health = await checkRendererHealth(rendererUrl, rendererAuthToken);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw new Error(`Could not reach renderer /health before upload: ${message}`);
+  }
+
+  if (!health.ok) {
+    throw new Error(`Renderer /health failed (${health.status} ${health.statusText}): ${health.body.slice(0, 300)}`);
+  }
+
+  let parsed: { rendererVersion?: string };
+  try {
+    parsed = JSON.parse(health.body) as { rendererVersion?: string };
+  } catch {
+    throw new Error(`Renderer /health returned non-JSON, so upload support cannot be verified: ${health.body.slice(0, 300)}`);
+  }
+
+  if (parsed.rendererVersion !== REQUIRED_RENDERER_VERSION) {
+    throw new Error(rendererUpgradeMessage(parsed.rendererVersion ?? null));
+  }
+}
 
 function extractImageStoragePath(src: string) {
   try {
@@ -178,22 +208,6 @@ export async function uploadRenderedPng(
   const rawToken = settings.renderer_auth_token?.trim().replace(/^Bearer\s+/i, "") ?? "";
   if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
 
-  // Optional: warn (don't block) if the upload service is on a stale version.
-  try {
-    const health = await checkRendererHealth(settings.renderer_url!, settings.renderer_auth_token);
-    if (health.ok) {
-      try {
-        const parsed = JSON.parse(health.body) as { rendererVersion?: string };
-        if (parsed?.rendererVersion !== REQUIRED_RENDERER_VERSION) {
-          console.warn("[uploadRenderedPng] upload service version mismatch", {
-            expected: REQUIRED_RENDERER_VERSION,
-            actual: parsed?.rendererVersion ?? null,
-          });
-        }
-      } catch {/* noop */}
-    }
-  } catch {/* noop */}
-
   console.log("[uploadRenderedPng]", {
     templateId: tpl.id,
     name: tpl.name,
@@ -203,6 +217,8 @@ export async function uploadRenderedPng(
   });
 
   try {
+    await assertRendererSupportsUpload(settings.renderer_url!, settings.renderer_auth_token);
+
     const res = await fetch(url, {
       method: "POST",
       headers,
@@ -216,7 +232,12 @@ export async function uploadRenderedPng(
       }),
     });
     const text = await res.text();
-    if (!res.ok) throw new Error(`Upload service responded ${res.status}: ${text.slice(0, 500)}`);
+    if (!res.ok) {
+      if (res.status === 404 && /Cannot POST\s+\/upload/i.test(text)) {
+        throw new Error(rendererUpgradeMessage(null));
+      }
+      throw new Error(`Upload service responded ${res.status}: ${text.slice(0, 500)}`);
+    }
     let parsed: { success?: boolean; downloadUrl?: string; error?: string };
     try {
       parsed = JSON.parse(text);
