@@ -19,12 +19,24 @@
 const express = require("express");
 const admin = require("firebase-admin");
 const puppeteer = require("puppeteer");
+const fs = require("fs");
+const path = require("path");
 
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
 const CHROME_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH || "/usr/bin/google-chrome";
-const RENDERER_VERSION = "2026-05-16-inline-fabric-fallback";
+const RENDERER_VERSION = "2026-05-16-local-fabric-timeouts";
+
+// Load Fabric.js from node_modules so we don't depend on a CDN at render time.
+let FABRIC_SOURCE = "";
+try {
+  const fabricPath = require.resolve("fabric/dist/index.min.js");
+  FABRIC_SOURCE = fs.readFileSync(fabricPath, "utf8");
+  console.log(`Loaded local Fabric.js (${FABRIC_SOURCE.length} bytes) from ${fabricPath}`);
+} catch (err) {
+  console.warn("Could not load local Fabric.js, will fall back to CDN:", err.message);
+}
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
@@ -51,6 +63,7 @@ function getBrowser() {
     browserPromise = puppeteer.launch({
       headless: "new",
       executablePath: CHROME_EXECUTABLE_PATH,
+      protocolTimeout: 180000,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     });
   }
@@ -113,29 +126,20 @@ async function inlineCanvasImages(canvasJson) {
 app.post("/render", authMiddleware, async (req, res) => {
   const { templateId, companyId, name, width, height, canvasJson } = req.body || {};
   console.log("RENDER PAYLOAD", {
-    templateId: req.body.templateId,
-    companyId: req.body.companyId,
-    width: req.body.width,
-    height: req.body.height,
-    hasCanvasJson: !!req.body.canvasJson,
-    objectCount: req.body.canvasJson?.objects?.length,
+    templateId,
+    companyId,
+    width,
+    height,
+    hasCanvasJson: !!canvasJson,
+    objectCount: canvasJson?.objects?.length ?? 0,
   });
   if (!templateId || !companyId || !canvasJson || !width || !height) {
     return res.status(400).json({ success: false, error: "Missing required fields" });
   }
 
   const objectCount = Array.isArray(canvasJson.objects) ? canvasJson.objects.length : 0;
-  console.log("[/render]", {
-    templateId,
-    companyId,
-    name,
-    width,
-    height,
-    objectCount,
-    canvasJsonPreview: JSON.stringify(canvasJson).slice(0, 500),
-  });
   if (objectCount === 0) {
-    return res.status(400).json({ success: false, error: "Template has no objects." });
+    return res.status(400).json({ success: false, error: "Template has no objects" });
   }
 
   const docRef = firestore.collection("rendered_templates").doc(`${companyId}_${templateId}`);
@@ -194,6 +198,8 @@ async function renderPng({ width, height, canvasJson }) {
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
+    page.setDefaultTimeout(180000);
+    page.setDefaultNavigationTimeout(180000);
     page.on("console", (msg) => console.log("[renderer-page]", msg.text()));
     page.on("pageerror", (err) => console.error("[renderer-page-error]", err));
     page.on("requestfailed", (req) => {
@@ -202,19 +208,25 @@ async function renderPng({ width, height, canvasJson }) {
       }
     });
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
+    const fabricScriptTag = FABRIC_SOURCE
+      ? "" // injected via addScriptTag below
+      : `<script src="https://cdn.jsdelivr.net/npm/fabric@7.3.1/dist/index.min.js"></script>`;
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       html,body{margin:0;padding:0;background:transparent}
       canvas{display:block}
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/fabric@7.3.1/dist/index.min.js"></script>
+    ${fabricScriptTag}
     </head><body>
     <canvas id="c" width="${width}" height="${height}"></canvas>
     </body></html>`;
     await page.setContent(html, { waitUntil: "networkidle0" });
+    if (FABRIC_SOURCE) {
+      await page.addScriptTag({ content: FABRIC_SOURCE });
+    }
 
     const renderInfo = await page.evaluate(async (json, renderWidth, renderHeight) => {
       const fabric = window.fabric;
-      if (!fabric) throw new Error("Fabric.js failed to load from CDN");
+      if (!fabric) throw new Error("Fabric.js failed to load");
       const CanvasClass = fabric.StaticCanvas || fabric.Canvas;
       const canvas = new CanvasClass("c", {
         width: renderWidth,
@@ -224,23 +236,33 @@ async function renderPng({ width, height, canvasJson }) {
         renderOnAddRemove: false,
       });
 
-      // Fabric v6: loadFromJSON returns a Promise
-      const result = canvas.loadFromJSON(json);
-      if (result && typeof result.then === "function") {
-        await result;
-      } else {
-        await new Promise((resolve) => canvas.loadFromJSON(json, resolve));
-      }
+      // Wrap loadFromJSON in an explicit Promise; supports both Fabric v5 (callback) and v6 (Promise).
+      await new Promise((resolve, reject) => {
+        try {
+          const result = canvas.loadFromJSON(json, () => resolve());
+          if (result && typeof result.then === "function") {
+            result.then(() => resolve()).catch(reject);
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
 
       const allObjects = canvas.getObjects();
       if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
 
       const imageObjects = allObjects.filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
+      // Wait per-image with a 10s individual timeout so one slow asset can't hang the render.
       await Promise.all(
         imageObjects.map((obj) => {
           const el = typeof obj.getElement === "function" ? obj.getElement() : null;
           if (!el || el.tagName !== "IMG" || el.complete) return Promise.resolve();
-          return new Promise((resolve) => { el.onload = el.onerror = resolve; });
+          return new Promise((resolve) => {
+            const done = () => resolve();
+            el.onload = done;
+            el.onerror = done;
+            setTimeout(done, 10000);
+          });
         }),
       );
       const failedImages = imageObjects
@@ -278,8 +300,8 @@ async function renderPng({ width, height, canvasJson }) {
       }
 
       canvas.renderAll();
-      // One more tick to flush
-      await new Promise((r) => setTimeout(r, 100));
+      // Allow Fabric a moment to fully flush text/image rasterization.
+      await new Promise((r) => setTimeout(r, 500));
       canvas.renderAll();
 
       const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
