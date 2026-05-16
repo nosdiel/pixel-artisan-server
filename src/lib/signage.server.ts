@@ -331,6 +331,7 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
 
   if (!settings?.renderer_url) throw new Error("Renderer URL is not configured. Add it in Settings → Signage publishing.");
   if (!settings.company_id) throw new Error("Company ID is not configured. Add it in Settings → Signage publishing.");
+  await assertRendererIsCurrent(settings.renderer_url, settings.renderer_auth_token);
 
   const { data: tpl, error: tplErr } = await supabaseAdmin
     .from("templates")
