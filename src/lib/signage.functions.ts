@@ -24,13 +24,16 @@ export const saveSignageSettings = createServerFn({ method: "POST" })
     }).parse(d),
   )
   .handler(async ({ data, context }) => {
+    const normalizedToken = data.renderer_auth_token
+      ? data.renderer_auth_token.trim().replace(/^Bearer\s+/i, "") || null
+      : null;
     const { error } = await context.supabase
       .from("signage_settings")
       .upsert({
         user_id: context.userId,
         company_id: data.company_id,
         renderer_url: data.renderer_url,
-        renderer_auth_token: data.renderer_auth_token || null,
+        renderer_auth_token: normalizedToken,
         auto_publish_enabled: data.auto_publish_enabled,
       });
     if (error) throw new Error(error.message);
@@ -47,8 +50,11 @@ export const testRenderer = createServerFn({ method: "POST" })
     if (!s?.renderer_url) throw new Error("Renderer URL is not set");
     const url = s.renderer_url.replace(/\/+$/, "") + "/health";
     const headers: Record<string, string> = {};
-    if (s.renderer_auth_token) headers["Authorization"] = `Bearer ${s.renderer_auth_token}`;
-    const res = await fetch(url, { headers });
+    if (s.renderer_auth_token) {
+      const rawToken = s.renderer_auth_token.trim().replace(/^Bearer\s+/i, "");
+      if (rawToken) headers["Authorization"] = `Bearer ${rawToken}`;
+    }
+    const res = await fetch(url, { method: "GET", headers });
     const body = await res.text();
     if (!res.ok) throw new Error(`Renderer health check failed (${res.status}): ${body.slice(0, 200)}`);
     return { ok: true, body: body.slice(0, 200) };
