@@ -55,6 +55,7 @@ function mimeForStoragePath(path: string) {
 async function refreshCanvasMediaUrls(canvasJson: unknown) {
   const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
   let refreshedImages = 0;
+  let inlinedImageBytes = 0;
   const refreshObject = async (obj: any): Promise<void> => {
     if (!obj || typeof obj !== "object") return;
     const path = typeof obj.imageStoragePath === "string"
@@ -76,6 +77,7 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
         obj.crossOrigin = "anonymous";
         obj.imageStoragePath = path;
         refreshedImages++;
+        inlinedImageBytes += bytes.length;
       }
     }
     await Promise.all(((obj.objects ?? obj._objects ?? []) as any[]).map(refreshObject));
@@ -83,7 +85,7 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
   };
   await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
   if (json.backgroundImage) await refreshObject(json.backgroundImage);
-  return { canvasJson: json, refreshedImages };
+  return { canvasJson: json, refreshedImages, inlinedImageBytes };
 }
 
 export async function checkRendererHealth(rendererUrl: string, rendererAuthToken: string | null): Promise<RendererHealthResponse> {
