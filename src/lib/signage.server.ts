@@ -1,6 +1,5 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import http from "node:http";
-import https from "node:https";
+import { createConnection } from "node:net";
 
 export type RendererSettings = {
   user_id: string;
@@ -31,34 +30,65 @@ export async function checkRendererHealth(rendererUrl: string, rendererAuthToken
   const headers: Record<string, string> = { Accept: "application/json, text/plain, */*" };
   if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
 
-  const client = parsed.protocol === "https:" ? https : http;
+  if (parsed.protocol !== "http:") {
+    const res = await fetch(url, { method: "GET", headers, redirect: "follow" });
+    const body = await res.text();
+    return { ok: res.ok, status: res.status, statusText: res.statusText, url, body: body.slice(0, 2000) };
+  }
 
   return new Promise((resolve) => {
-    const req = client.request(
-      parsed,
-      { method: "GET", headers, timeout: 15000 },
-      (res) => {
-        res.setEncoding("utf8");
-        let body = "";
-        res.on("data", (chunk) => {
-          if (body.length < 4000) body += chunk;
-        });
-        res.on("end", () => {
-          resolve({
-            ok: !!res.statusCode && res.statusCode >= 200 && res.statusCode < 300,
-            status: res.statusCode ?? 0,
-            statusText: res.statusMessage || "",
-            url,
-            body: body.slice(0, 2000),
-          });
-        });
-      },
-    );
+    const port = parsed.port ? Number(parsed.port) : 80;
+    const socket = createConnection({ host: parsed.hostname, port });
+    let raw = "";
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve(parseRawHttpResponse(raw, url));
+    };
 
-    req.on("timeout", () => req.destroy(new Error("Renderer health check timed out after 15 seconds")));
-    req.on("error", (e) => resolve({ ok: false, status: 0, statusText: "Request failed", url, body: e.message }));
-    req.end();
+    socket.setTimeout(15000);
+    socket.on("connect", () => {
+      const authLine = rawToken ? `Authorization: Bearer ${rawToken}\r\n` : "";
+      socket.write(`GET ${parsed.pathname}${parsed.search} HTTP/1.1\r\nHost: ${parsed.host}\r\nAccept: ${headers.Accept}\r\n${authLine}Connection: close\r\n\r\n`);
+    });
+    socket.on("data", (chunk) => { raw += chunk.toString(); });
+    socket.on("end", finish);
+    socket.on("close", finish);
+    socket.on("timeout", () => socket.destroy(new Error("Renderer health check timed out after 15 seconds")));
+    socket.on("error", (e) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: false, status: 0, statusText: "Request failed", url, body: e.message });
+    });
   });
+}
+
+function parseRawHttpResponse(raw: string, url: string): RendererHealthResponse {
+  const splitAt = raw.indexOf("\r\n\r\n");
+  const head = splitAt >= 0 ? raw.slice(0, splitAt) : raw;
+  const body = splitAt >= 0 ? raw.slice(splitAt + 4) : "";
+  const statusLine = head.split(/\r?\n/)[0] ?? "";
+  const match = statusLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d{3})\s*(.*)$/);
+  const status = match ? Number(match[1]) : 0;
+  const statusText = match?.[2] || "";
+  const decodedBody = /transfer-encoding:\s*chunked/i.test(head) ? decodeChunkedBody(body) : body;
+  return { ok: status >= 200 && status < 300, status, statusText, url, body: decodedBody.slice(0, 2000) };
+}
+
+function decodeChunkedBody(body: string) {
+  let index = 0;
+  let decoded = "";
+  while (index < body.length) {
+    const lineEnd = body.indexOf("\r\n", index);
+    if (lineEnd < 0) break;
+    const size = parseInt(body.slice(index, lineEnd), 16);
+    if (!Number.isFinite(size) || size <= 0) break;
+    const chunkStart = lineEnd + 2;
+    decoded += body.slice(chunkStart, chunkStart + size);
+    index = chunkStart + size + 2;
+  }
+  return decoded || body;
 }
 
 /**
