@@ -82,6 +82,11 @@ const VIDEO_RECORDING_MIN_SECONDS = 10;
 const VIDEO_RECORDING_MAX_SECONDS = 30;
 const VIDEO_RECORDING_BITRATE = 5_000_000;
 
+type VideoLayer = {
+  video: HTMLVideoElement;
+  json: any;
+};
+
 function pickRecorderMimeType() {
   const candidates = [
     "video/webm;codecs=vp9",
@@ -256,6 +261,29 @@ async function verifyRecordedVideoBlob(blob: Blob, expectedSeconds: number) {
   }
 }
 
+function drawVideoLayer(ctx: CanvasRenderingContext2D, layer: VideoLayer) {
+  const obj = layer.json ?? {};
+  const video = layer.video;
+  const left = Number(obj.left) || 0;
+  const top = Number(obj.top) || 0;
+  const width = Number(obj.width) || video.videoWidth || video.clientWidth || 1;
+  const height = Number(obj.height) || video.videoHeight || video.clientHeight || 1;
+  const scaleX = Number(obj.scaleX) || 1;
+  const scaleY = Number(obj.scaleY) || 1;
+  const angle = ((Number(obj.angle) || 0) * Math.PI) / 180;
+  const opacity = Number.isFinite(Number(obj.opacity)) ? Number(obj.opacity) : 1;
+  const originX = obj.originX === "center" ? width / 2 : obj.originX === "right" ? width : 0;
+  const originY = obj.originY === "center" ? height / 2 : obj.originY === "bottom" ? height : 0;
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.translate(left + originX * scaleX, top + originY * scaleY);
+  ctx.rotate(angle);
+  ctx.scale(scaleX, scaleY);
+  ctx.drawImage(video, -originX, -originY, width, height);
+  ctx.restore();
+}
+
 function TemplatesPage() {
   const qc = useQueryClient();
   const fetchItems = useServerFn(listSquareItems);
@@ -365,6 +393,7 @@ function TemplatesPage() {
     });
 
     const videos: HTMLVideoElement[] = [];
+    const videoLayers: VideoLayer[] = [];
     let rafId: number | null = null;
     let recorder: MediaRecorder | null = null;
 
@@ -393,6 +422,7 @@ function TemplatesPage() {
             (fabricObj as any).setElement(v);
             (fabricObj as any).objectCaching = false;
             videos.push(v);
+            videoLayers.push({ video: v, json: j });
           }
 
           const childJson = (j?.objects ?? j?._objects ?? []) as any[];
@@ -417,13 +447,18 @@ function TemplatesPage() {
 
       // RAF loop: keep re-rendering so videos animate, and explicitly push
       // canvas frames when the browser exposes CanvasCaptureMediaStreamTrack.
-      const tick = () => {
+      const ctx = canvasEl.getContext("2d");
+      if (!ctx) throw new Error("Could not create video recording canvas context");
+      const renderFrame = () => {
         staticCanvas.renderAll();
+        for (const layer of videoLayers) drawVideoLayer(ctx, layer);
         requestCanvasFrame?.();
+      };
+      const tick = () => {
+        renderFrame();
         rafId = requestAnimationFrame(tick);
       };
-      staticCanvas.renderAll();
-      requestCanvasFrame?.();
+      renderFrame();
       rafId = requestAnimationFrame(tick);
 
       const recorderMime = pickRecorderMimeType();
@@ -451,8 +486,7 @@ function TemplatesPage() {
       await Promise.all(videos.map((v) => waitForVideoFrame(v, v.currentSrc || v.src)));
       // Give the canvas a couple of frames before opening the recorder.
       await waitForAnimationFrames(3);
-      staticCanvas.renderAll();
-      requestCanvasFrame?.();
+      renderFrame();
       recorder.start(250);
       window.setTimeout(() => {
         try { recorder?.state === "recording" && recorder.stop(); } catch {}
