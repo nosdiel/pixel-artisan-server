@@ -631,10 +631,11 @@ function EditorPage() {
   const addImageFromUrl = async (url: string, path?: string) => {
     const fc = fcRef.current; if (!fc || !fabric) return;
     const img = await fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-    const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
+    const { w, h } = getCanvasSize(preset);
+    const max = Math.min(w * 0.6, h * 0.6);
     const scale = Math.min(max / img.width!, max / img.height!, 1);
     img.scale(scale);
-    img.set({ left: (fc.width! - img.width! * scale) / 2, top: (fc.height! - img.height! * scale) / 2 });
+    img.set({ left: (w - img.width! * scale) / 2, top: (h - img.height! * scale) / 2 });
     if (path) img.set("imageStoragePath", path);
     fc.add(img); fc.setActiveObject(img); fc.renderAll();
   };
