@@ -259,6 +259,7 @@ function EditorPage() {
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
     const fittedZoom = getFitZoom(preset);
+    fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
     fc.setZoom(fittedZoom);
     fc.setDimensions({ width: w * fittedZoom, height: h * fittedZoom }, { cssOnly: true });
     setZoom(fittedZoom);
