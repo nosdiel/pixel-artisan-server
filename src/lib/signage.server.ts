@@ -126,20 +126,26 @@ export async function callRenderer(args: {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const rawToken = args.rendererAuthToken?.trim().replace(/^Bearer\s+/i, "") ?? "";
   if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
+  const body = JSON.stringify(args.payload);
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(args.payload),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`Renderer responded ${res.status}: ${text.slice(0, 300)}`);
+  const parsed = new URL(url);
+  const response = parsed.protocol === "http:"
+    ? await rawHttpRequest("POST", parsed, headers, body)
+    : await fetch(url, { method: "POST", headers, body }).then(async (res) => ({
+      ok: res.ok,
+      status: res.status,
+      statusText: res.statusText,
+      url,
+      body: await res.text(),
+    }));
+
+  if (!response.ok) {
+    throw new Error(`Renderer responded ${response.status}: ${response.body.slice(0, 1000)}`);
   }
   try {
-    return JSON.parse(text) as RendererResponse;
+    return JSON.parse(response.body) as RendererResponse;
   } catch {
-    throw new Error(`Renderer returned non-JSON response: ${text.slice(0, 200)}`);
+    throw new Error(`Renderer returned non-JSON response: ${response.body.slice(0, 500)}`);
   }
 }
 
