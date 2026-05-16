@@ -37,7 +37,8 @@ export async function callRenderer(args: {
 }): Promise<RendererResponse> {
   const url = args.rendererUrl.replace(/\/+$/, "") + "/render";
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (args.rendererAuthToken) headers["Authorization"] = `Bearer ${args.rendererAuthToken}`;
+  const rawToken = args.rendererAuthToken?.trim().replace(/^Bearer\s+/i, "") ?? "";
+  if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
 
   const res = await fetch(url, {
     method: "POST",
