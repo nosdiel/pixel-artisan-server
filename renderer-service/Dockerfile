@@ -1,8 +1,18 @@
-# Puppeteer-ready Node 20 image
-FROM ghcr.io/puppeteer/puppeteer:23.11.1
+# Node 20 with build tools for node-canvas native compilation
+FROM node:20-bookworm-slim
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
+# node-canvas system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3 \
+    pkg-config \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libjpeg-dev \
+    libgif-dev \
+    librsvg2-dev \
+    libpixman-1-dev \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
