@@ -841,7 +841,7 @@ function EditorPage() {
       fc.setDimensions({ width: w * prevZoom, height: h * prevZoom }, { cssOnly: true });
 
       const blob = await (await fetch(dataUrl)).blob();
-      const { best, variants, originalSize, width, height } = await autoCompress(blob);
+      const { best, variants, originalSize, width: imageWidth, height: imageHeight } = await autoCompress(blob);
       const { data: ud } = await supabase.auth.getUser();
       const userId = ud.user!.id;
 
@@ -851,8 +851,8 @@ function EditorPage() {
         user_id: userId,
         name: title,
         preset,
-        width,
-        height,
+        width: w,
+        height: h,
         canvas_json: JSON.parse(JSON.stringify(canvasJson)),
       };
       if (savedTemplateId) {
@@ -896,7 +896,7 @@ function EditorPage() {
       variantRecords.sort((x, y) => x.size - y.size);
 
       const imagePayload = {
-        user_id: userId, slug, title, width, height,
+        user_id: userId, slug, title, width: imageWidth, height: imageHeight,
         original_size_bytes: originalSize, optimized_size_bytes: best.size,
         variants: variantRecords, preset, source: "editor",
         template_id: savedTemplateId,
