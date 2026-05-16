@@ -198,6 +198,8 @@ async function renderPng({ width, height, canvasJson }) {
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
+    page.setDefaultTimeout(180000);
+    page.setDefaultNavigationTimeout(180000);
     page.on("console", (msg) => console.log("[renderer-page]", msg.text()));
     page.on("pageerror", (err) => console.error("[renderer-page-error]", err));
     page.on("requestfailed", (req) => {
@@ -206,19 +208,25 @@ async function renderPng({ width, height, canvasJson }) {
       }
     });
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
+    const fabricScriptTag = FABRIC_SOURCE
+      ? "" // injected via addScriptTag below
+      : `<script src="https://cdn.jsdelivr.net/npm/fabric@7.3.1/dist/index.min.js"></script>`;
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       html,body{margin:0;padding:0;background:transparent}
       canvas{display:block}
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/fabric@7.3.1/dist/index.min.js"></script>
+    ${fabricScriptTag}
     </head><body>
     <canvas id="c" width="${width}" height="${height}"></canvas>
     </body></html>`;
     await page.setContent(html, { waitUntil: "networkidle0" });
+    if (FABRIC_SOURCE) {
+      await page.addScriptTag({ content: FABRIC_SOURCE });
+    }
 
     const renderInfo = await page.evaluate(async (json, renderWidth, renderHeight) => {
       const fabric = window.fabric;
-      if (!fabric) throw new Error("Fabric.js failed to load from CDN");
+      if (!fabric) throw new Error("Fabric.js failed to load");
       const CanvasClass = fabric.StaticCanvas || fabric.Canvas;
       const canvas = new CanvasClass("c", {
         width: renderWidth,
@@ -228,23 +236,33 @@ async function renderPng({ width, height, canvasJson }) {
         renderOnAddRemove: false,
       });
 
-      // Fabric v6: loadFromJSON returns a Promise
-      const result = canvas.loadFromJSON(json);
-      if (result && typeof result.then === "function") {
-        await result;
-      } else {
-        await new Promise((resolve) => canvas.loadFromJSON(json, resolve));
-      }
+      // Wrap loadFromJSON in an explicit Promise; supports both Fabric v5 (callback) and v6 (Promise).
+      await new Promise((resolve, reject) => {
+        try {
+          const result = canvas.loadFromJSON(json, () => resolve());
+          if (result && typeof result.then === "function") {
+            result.then(() => resolve()).catch(reject);
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
 
       const allObjects = canvas.getObjects();
       if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
 
       const imageObjects = allObjects.filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
+      // Wait per-image with a 10s individual timeout so one slow asset can't hang the render.
       await Promise.all(
         imageObjects.map((obj) => {
           const el = typeof obj.getElement === "function" ? obj.getElement() : null;
           if (!el || el.tagName !== "IMG" || el.complete) return Promise.resolve();
-          return new Promise((resolve) => { el.onload = el.onerror = resolve; });
+          return new Promise((resolve) => {
+            const done = () => resolve();
+            el.onload = done;
+            el.onerror = done;
+            setTimeout(done, 10000);
+          });
         }),
       );
       const failedImages = imageObjects
@@ -282,8 +300,8 @@ async function renderPng({ width, height, canvasJson }) {
       }
 
       canvas.renderAll();
-      // One more tick to flush
-      await new Promise((r) => setTimeout(r, 100));
+      // Allow Fabric a moment to fully flush text/image rasterization.
+      await new Promise((r) => setTimeout(r, 500));
       canvas.renderAll();
 
       const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
