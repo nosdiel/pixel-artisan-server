@@ -136,6 +136,40 @@ function waitForVideoCanPlay(video: HTMLVideoElement, label: string, timeoutMs =
   });
 }
 
+function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5_000) {
+  return new Promise<void>((resolve, reject) => {
+    let done = false;
+    const finish = (error?: Error) => {
+      if (done) return;
+      done = true;
+      if (error) reject(error);
+      else resolve();
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      finish(new Error(`Timed out waiting for video frame: ${label}`));
+    }, timeoutMs);
+
+    const cleanupFinish = (error?: Error) => {
+      window.clearTimeout(timeoutId);
+      finish(error);
+    };
+
+    if ("requestVideoFrameCallback" in video) {
+      (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(() => cleanupFinish());
+      return;
+    }
+
+    const startedAt = performance.now();
+    const check = () => {
+      if (video.readyState >= 2 && video.currentTime > 0) cleanupFinish();
+      else if (performance.now() - startedAt > timeoutMs) cleanupFinish(new Error(`Timed out waiting for video frame: ${label}`));
+      else requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
+}
+
 async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: number) {
   if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
 
