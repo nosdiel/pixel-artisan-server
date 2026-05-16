@@ -5,9 +5,11 @@ uploads them to Firebase Storage, and updates Firestore.
 
 ## Endpoints
 
-- `GET /health` — liveness probe (used by the "Test renderer" button in Settings). Must return `rendererVersion: "2026-05-16-browser-render-upload-blank-check"` after deploying this fix.
+- `GET /health` — liveness probe (used by the "Test renderer" button in Settings). Must return `rendererVersion: "2026-05-16-video-upload"` after deploying this fix.
 - `POST /upload` — body `{ templateId, companyId, name, width, height, pngBase64 }`.
   Returns `{ success, downloadUrl }`.
+- `POST /upload-video` — body `{ templateId, companyId, name, width, height, durationMs, mimeType, videoBase64 }`.
+  `mimeType` must be `video/mp4` or `video/webm`. Returns `{ success, downloadUrl }`.
 
 ## Environment variables
 
@@ -23,8 +25,10 @@ uploads them to Firebase Storage, and updates Firestore.
 Each render writes two objects:
 
 ```
-rendered/{companyId}/{templateId}/latest.png        # always overwritten
-rendered/{companyId}/{templateId}/{timestamp}.png   # versioned history
+rendered/{companyId}/{templateId}/latest.png        # always overwritten (image templates)
+rendered/{companyId}/{templateId}/{timestamp}.png   # versioned history (image templates)
+rendered/{companyId}/{templateId}/latest.{mp4|webm} # video templates
+rendered/{companyId}/{templateId}/{timestamp}.{mp4|webm}
 ```
 
 And a Firestore doc at `rendered_templates/{companyId}_{templateId}` with
@@ -66,4 +70,4 @@ Render/Fly/Railway also work — point them at the included `Dockerfile`.
 ## Verify deployment
 
 After redeploying, open `/health` on the renderer URL. If the response does not include
-`"rendererVersion":"2026-05-16-browser-render-upload-blank-check"`, the app is still calling old render code that does not support `/upload`.
+`"rendererVersion":"2026-05-16-video-upload"`, the app is still calling old render code that does not support `/upload-video`.

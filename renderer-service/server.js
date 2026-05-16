@@ -14,7 +14,7 @@ const zlib = require("zlib");
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
-const RENDERER_VERSION = "2026-05-16-browser-render-upload-blank-check";
+const RENDERER_VERSION = "2026-05-16-video-upload";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
@@ -43,7 +43,7 @@ function authMiddleware(req, res, next) {
 }
 
 const app = express();
-app.use(express.json({ limit: "60mb" }));
+app.use(express.json({ limit: "200mb" }));
 
 // CORS — the browser does not call this directly today (the Lovable server
 // proxies the upload), but enable it so a future direct call works too.
@@ -264,6 +264,104 @@ app.post("/render", authMiddleware, (req, res) => {
     success: false,
     error: "This service no longer renders Fabric server-side. POST a pre-rendered PNG to /upload as { templateId, companyId, name, pngBase64 }.",
   });
+});
+
+// ====== Video upload ======
+function decodeVideoPayload(input, mimeType) {
+  if (!input || typeof input !== "string") throw new Error("videoBase64 is required");
+  if (mimeType !== "video/mp4" && mimeType !== "video/webm") {
+    throw new Error(`Unsupported mimeType: ${mimeType}`);
+  }
+  const stripped = input.startsWith("data:") ? input.slice(input.indexOf(",") + 1) : input;
+  const buffer = Buffer.from(stripped, "base64");
+  if (buffer.length < 32) throw new Error("Video payload is too small");
+  return buffer;
+}
+
+async function uploadVideoBuffer(buffer, storagePath, mimeType) {
+  const file = bucket.file(storagePath);
+  await file.save(buffer, {
+    contentType: mimeType,
+    resumable: false,
+    metadata: { cacheControl: "public, max-age=60" },
+  });
+  const [url] = await file.getSignedUrl({
+    action: "read",
+    expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+  });
+  return url;
+}
+
+app.post("/upload-video", authMiddleware, async (req, res) => {
+  const { templateId, companyId, name, videoBase64, mimeType, width, height, durationMs } = req.body || {};
+  console.log("UPLOAD VIDEO PAYLOAD", {
+    templateId,
+    companyId,
+    width,
+    height,
+    durationMs,
+    mimeType,
+    name,
+    videoBytesApprox: typeof videoBase64 === "string" ? Math.floor(videoBase64.length * 0.75) : 0,
+  });
+  if (!templateId || !companyId || !videoBase64 || !mimeType) {
+    return res.status(400).json({ success: false, error: "Missing templateId, companyId, mimeType, or videoBase64" });
+  }
+
+  const docRef = firestore.collection("rendered_templates").doc(`${companyId}_${templateId}`);
+  const startedAt = new Date();
+  try {
+    let buffer;
+    try {
+      buffer = decodeVideoPayload(videoBase64, mimeType);
+    } catch (e) {
+      return res.status(400).json({ success: false, error: e.message });
+    }
+
+    const ext = mimeType === "video/mp4" ? "mp4" : "webm";
+    await docRef.set(
+      { companyId, templateId, name: name || null, status: "uploading", startedAt },
+      { merge: true },
+    );
+
+    const ts = startedAt.toISOString().replace(/[:.]/g, "-");
+    const latestPath = `rendered/${companyId}/${templateId}/latest.${ext}`;
+    const versionPath = `rendered/${companyId}/${templateId}/${ts}.${ext}`;
+
+    const latestUrl = await uploadVideoBuffer(buffer, latestPath, mimeType);
+    const versionUrl = await uploadVideoBuffer(buffer, versionPath, mimeType);
+
+    await docRef.set(
+      {
+        companyId,
+        templateId,
+        name: name || null,
+        status: "success",
+        downloadUrl: latestUrl,
+        latestPath,
+        versionPath,
+        versionUrl,
+        mimeType,
+        width: width ?? null,
+        height: height ?? null,
+        durationMs: durationMs ?? null,
+        bytes: buffer.length,
+        renderedAt: new Date(),
+      },
+      { merge: true },
+    );
+
+    res.json({ success: true, downloadUrl: latestUrl });
+  } catch (err) {
+    console.error("Video upload failed:", err);
+    await docRef
+      .set(
+        { status: "error", error: String(err && err.message ? err.message : err), erroredAt: new Date() },
+        { merge: true },
+      )
+      .catch(() => {});
+    res.status(500).json({ success: false, error: String(err && err.message ? err.message : err) });
+  }
 });
 
 app.listen(PORT, () => {

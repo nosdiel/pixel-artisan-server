@@ -17,7 +17,7 @@ const PRESET_SIZES: Record<string, { w: number; h: number }> = {
   "1080x1080": { w: 1080, h: 1080 },
 };
 
-const REQUIRED_RENDERER_VERSION = "2026-05-16-browser-render-upload-blank-check";
+const REQUIRED_RENDERER_VERSION = "2026-05-16-video-upload";
 
 function rendererUpgradeMessage(actualVersion?: string | null) {
   const actual = actualVersion ? ` Current /health rendererVersion is "${actualVersion}".` : "";
@@ -74,13 +74,25 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
   const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
   let refreshedImages = 0;
   let inlinedImageBytes = 0;
+  let refreshedVideos = 0;
   const refreshObject = async (obj: any): Promise<void> => {
     if (!obj || typeof obj !== "object") return;
-    const path = typeof obj.imageStoragePath === "string"
+    // Refresh video signed URLs in place (we can't inline videos as base64
+    // — they're too large — so keep them as fresh signed URLs).
+    const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : null;
+    if (videoPath) {
+      const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(videoPath, 3600);
+      if (error) throw new Error(`Could not refresh video URL for render: ${error.message}`);
+      if (data?.signedUrl) {
+        obj.videoSrc = data.signedUrl;
+        refreshedVideos++;
+      }
+    }
+    const path = videoPath ? null : (typeof obj.imageStoragePath === "string"
       ? obj.imageStoragePath
       : typeof obj.src === "string"
         ? extractImageStoragePath(obj.src)
-        : null;
+        : null);
     if (path) {
       const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(path, 3600);
       if (error) throw new Error(`Could not refresh image URL for render: ${error.message}`);
@@ -103,7 +115,7 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
   };
   await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
   if (json.backgroundImage) await refreshObject(json.backgroundImage);
-  return { canvasJson: json, refreshedImages, inlinedImageBytes };
+  return { canvasJson: json, refreshedImages, inlinedImageBytes, refreshedVideos };
 }
 
 /**
@@ -205,7 +217,7 @@ export async function prepareTemplateForBrowserRender(userId: string, templateId
     throw new Error("Template has no objects.");
   }
 
-  const { canvasJson, refreshedImages, inlinedImageBytes } = await refreshCanvasMediaUrls(originalCanvasJson);
+  const { canvasJson, refreshedImages, inlinedImageBytes, refreshedVideos } = await refreshCanvasMediaUrls(originalCanvasJson);
   const normalizedImages = normalizeOversizedBaseImages(canvasJson, renderWidth, renderHeight);
   console.log("[prepareTemplate]", {
     templateId: tpl.id,
@@ -215,6 +227,7 @@ export async function prepareTemplateForBrowserRender(userId: string, templateId
     objectCount,
     refreshedImages,
     inlinedImageBytes,
+    refreshedVideos,
     normalizedImages,
   });
 
@@ -324,4 +337,102 @@ export async function uploadRenderedPng(
  */
 export async function autoPublishStaleTemplates(_userId: string, _candidateTemplateIds: string[]) {
   return { published: 0, errors: [] as string[] };
+}
+
+/**
+ * Step 2 (video variant): forward a browser-recorded video (MP4 or WebM) to
+ * the upload service. Mirrors uploadRenderedPng.
+ */
+export async function uploadRenderedVideo(
+  userId: string,
+  args: {
+    templateId: string;
+    videoBase64: string;
+    mimeType: string;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+  },
+) {
+  const settings = await getRendererSettings(userId);
+
+  const { data: tpl, error: tplErr } = await supabaseAdmin
+    .from("templates")
+    .select("id, name")
+    .eq("id", args.templateId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (tplErr) throw new Error(tplErr.message);
+  if (!tpl) throw new Error("Template not found");
+
+  const url = settings.renderer_url!.replace(/\/+$/, "") + "/upload-video";
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const rawToken = settings.renderer_auth_token?.trim().replace(/^Bearer\s+/i, "") ?? "";
+  if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
+
+  console.log("[uploadRenderedVideo]", {
+    templateId: tpl.id,
+    name: tpl.name,
+    width: args.width,
+    height: args.height,
+    mimeType: args.mimeType,
+    durationMs: args.durationMs,
+    videoBytesApprox: Math.floor((args.videoBase64?.length ?? 0) * 0.75),
+  });
+
+  try {
+    await assertRendererSupportsUpload(settings.renderer_url!, settings.renderer_auth_token);
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        templateId: tpl.id,
+        companyId: settings.company_id,
+        name: tpl.name,
+        width: args.width ?? null,
+        height: args.height ?? null,
+        durationMs: args.durationMs ?? null,
+        mimeType: args.mimeType,
+        videoBase64: args.videoBase64,
+      }),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      if (res.status === 404 && /Cannot POST\s+\/upload-video/i.test(text)) {
+        throw new Error(rendererUpgradeMessage(null));
+      }
+      throw new Error(`Upload service responded ${res.status}: ${text.slice(0, 500)}`);
+    }
+    let parsed: { success?: boolean; downloadUrl?: string; error?: string };
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error(`Upload service returned non-JSON: ${text.slice(0, 300)}`);
+    }
+    if (!parsed.success) throw new Error(parsed.error || "Upload service returned success=false");
+
+    await supabaseAdmin
+      .from("templates")
+      .update({
+        last_published_at: new Date().toISOString(),
+        last_published_url: parsed.downloadUrl ?? null,
+        last_publish_status: "success",
+        last_publish_error: null,
+      })
+      .eq("id", tpl.id);
+
+    return { ok: true as const, downloadUrl: parsed.downloadUrl ?? null };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await supabaseAdmin
+      .from("templates")
+      .update({
+        last_published_at: new Date().toISOString(),
+        last_publish_status: "error",
+        last_publish_error: message.slice(0, 1000),
+      })
+      .eq("id", tpl.id);
+    throw new Error(message);
+  }
 }
