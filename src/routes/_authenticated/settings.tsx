@@ -104,7 +104,16 @@ function SettingsPage() {
   const handleTestRenderer = async () => {
     setSignageTesting(true);
     try {
-      const r = await pingRenderer();
+      const r = await pingRenderer({
+        data: {
+          renderer_url: rendererUrl.trim(),
+          renderer_auth_token: rendererToken.trim() || null,
+        },
+      });
+      if (!r.ok) {
+        toast.error(`Renderer health check failed (${r.status || "network"}): ${r.body || r.statusText}`);
+        return;
+      }
       toast.success(`Renderer reachable${r.body ? ` · ${r.body}` : ""}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
