@@ -178,6 +178,24 @@ async function renderPng({ width, height, canvasJson }) {
         await new Promise((resolve) => canvas.loadFromJSON(json, resolve));
       }
 
+      const imageObjects = canvas.getObjects().filter((obj) => String(obj.type || "").toLowerCase().includes("image"));
+      await Promise.all(
+        imageObjects.map((obj) => {
+          const el = typeof obj.getElement === "function" ? obj.getElement() : null;
+          if (!el || el.tagName !== "IMG" || el.complete) return Promise.resolve();
+          return new Promise((resolve) => { el.onload = el.onerror = resolve; });
+        }),
+      );
+      const failedImages = imageObjects
+        .map((obj) => {
+          const el = typeof obj.getElement === "function" ? obj.getElement() : null;
+          const src = typeof obj.getSrc === "function" ? obj.getSrc() : obj.src;
+          return { el, src };
+        })
+        .filter(({ el }) => el && el.tagName === "IMG" && (!el.naturalWidth || !el.naturalHeight))
+        .map(({ src }) => String(src || "unknown").slice(0, 160));
+      if (failedImages.length) throw new Error(`Image layer failed to load: ${failedImages.join(", ")}`);
+
       // Wait for any <img> resources referenced by fabric objects to finish loading
       const imgs = Array.from(document.images || []);
       await Promise.all(
