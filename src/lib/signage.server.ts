@@ -172,6 +172,30 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
   if (tplErr) throw new Error(tplErr.message);
   if (!tpl) throw new Error("Template not found");
 
+  const canvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
+  const objectCount = Array.isArray(canvasJson?.objects) ? canvasJson!.objects!.length : 0;
+  console.log("[publishTemplate]", {
+    templateId: tpl.id,
+    name: tpl.name,
+    width: tpl.width,
+    height: tpl.height,
+    hasCanvasJson: !!canvasJson,
+    objectCount,
+    canvasJsonPreview: canvasJson ? JSON.stringify(canvasJson).slice(0, 300) : null,
+  });
+  if (!canvasJson || objectCount === 0) {
+    const msg = "Template has no objects.";
+    await supabaseAdmin
+      .from("templates")
+      .update({
+        last_published_at: new Date().toISOString(),
+        last_publish_status: "error",
+        last_publish_error: msg,
+      })
+      .eq("id", tpl.id);
+    throw new Error(msg);
+  }
+
   const bindings = (tpl.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
   const ids = bindings.map((b) => b.square_item_id);
   let squareData: Array<{ square_item_id: string; name: string | null; price_cents: number | null; currency: string | null }> = [];

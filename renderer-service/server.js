@@ -77,6 +77,20 @@ app.post("/render", authMiddleware, async (req, res) => {
     return res.status(400).json({ success: false, error: "Missing required fields" });
   }
 
+  const objectCount = Array.isArray(canvasJson.objects) ? canvasJson.objects.length : 0;
+  console.log("[/render]", {
+    templateId,
+    companyId,
+    name,
+    width,
+    height,
+    objectCount,
+    canvasJsonPreview: JSON.stringify(canvasJson).slice(0, 500),
+  });
+  if (objectCount === 0) {
+    return res.status(400).json({ success: false, error: "Template has no objects." });
+  }
+
   const docRef = firestore.collection("rendered_templates").doc(`${companyId}_${templateId}`);
   const startedAt = new Date();
 
@@ -138,17 +152,42 @@ async function renderPng({ width, height, canvasJson }) {
     </body></html>`;
     await page.setContent(html, { waitUntil: "networkidle0" });
 
-    await page.evaluate(async (json) => {
+    const loadedCount = await page.evaluate(async (json) => {
       const fabric = window.fabric;
+      if (!fabric) throw new Error("Fabric.js failed to load from CDN");
       const canvas = new fabric.Canvas("c", { enableRetinaScaling: false });
-      await new Promise((resolve, reject) => {
-        canvas.loadFromJSON(json, () => {
-          canvas.renderAll();
-          // Give external images a beat to draw
-          setTimeout(resolve, 250);
-        }, (_obj, err) => { if (err) reject(err); });
-      });
+
+      // Fabric v6: loadFromJSON returns a Promise
+      const result = canvas.loadFromJSON(json);
+      if (result && typeof result.then === "function") {
+        await result;
+      } else {
+        await new Promise((resolve) => canvas.loadFromJSON(json, resolve));
+      }
+
+      // Wait for any <img> resources referenced by fabric objects to finish loading
+      const imgs = Array.from(document.images || []);
+      await Promise.all(
+        imgs.map((img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise((r) => { img.onload = img.onerror = r; }),
+        ),
+      );
+
+      // Wait for fonts (custom or web fonts used in text objects)
+      if (document.fonts && document.fonts.ready) {
+        try { await document.fonts.ready; } catch {}
+      }
+
+      canvas.renderAll();
+      // One more tick to flush
+      await new Promise((r) => setTimeout(r, 100));
+      canvas.renderAll();
+
+      return canvas.getObjects().length;
     }, canvasJson);
+    console.log(`[/render] fabric loaded ${loadedCount} objects on canvas`);
 
     const buf = await page.screenshot({ type: "png", omitBackground: false, clip: { x: 0, y: 0, width, height } });
     return buf;
