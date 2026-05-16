@@ -208,21 +208,15 @@ async function renderPng({ width, height, canvasJson }) {
       }
     });
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
-    const fabricScriptTag = FABRIC_SOURCE
-      ? "" // injected via addScriptTag below
-      : `<script src="https://cdn.jsdelivr.net/npm/fabric@7.3.1/dist/index.min.js"></script>`;
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       html,body{margin:0;padding:0;background:transparent}
       canvas{display:block}
     </style>
-    ${fabricScriptTag}
     </head><body>
     <canvas id="c" width="${width}" height="${height}"></canvas>
     </body></html>`;
-    await page.setContent(html, { waitUntil: "networkidle0" });
-    if (FABRIC_SOURCE) {
-      await page.addScriptTag({ content: FABRIC_SOURCE });
-    }
+    await page.setContent(html, { waitUntil: "load" });
+    await page.addScriptTag({ content: FABRIC_SOURCE });
 
     const renderInfo = await page.evaluate(async (json, renderWidth, renderHeight) => {
       const fabric = window.fabric;
