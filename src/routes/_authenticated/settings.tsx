@@ -342,7 +342,7 @@ function SettingsPage() {
               type="password"
               value={rendererToken}
               onChange={(e) => setRendererToken(e.target.value)}
-              placeholder="Bearer token shared with the renderer"
+              placeholder="Raw token shared with the renderer"
               className="mt-1"
             />
           </div>
