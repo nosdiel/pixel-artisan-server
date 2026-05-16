@@ -298,10 +298,27 @@ async function renderPng({ width, height, canvasJson }) {
       await new Promise((r) => setTimeout(r, 500));
       canvas.renderAll();
 
+      const ctx = canvas.lowerCanvasEl.getContext("2d", { willReadFrequently: true });
+      const pixels = ctx.getImageData(0, 0, renderWidth, renderHeight).data;
+      let nonWhitePixels = 0;
+      let paintedPixels = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        const alpha = pixels[i + 3];
+        if (alpha > 5) {
+          paintedPixels += 1;
+          if (pixels[i] < 250 || pixels[i + 1] < 250 || pixels[i + 2] < 250) nonWhitePixels += 1;
+        }
+      }
+      const nonWhiteRatio = paintedPixels ? nonWhitePixels / paintedPixels : 0;
+      if (!paintedPixels || nonWhiteRatio < 0.0005) {
+        throw new Error(`Rendered PNG is blank white (nonWhiteRatio=${nonWhiteRatio.toFixed(6)}, objects=${allObjects.length})`);
+      }
+
       const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
       return {
         loadedCount: allObjects.length,
         visibleOnCanvasCount: visibleOnCanvas.length,
+        nonWhiteRatio,
         dataUrl,
         objectSummary: allObjects.map((obj) => ({
           type: obj.type,
@@ -318,6 +335,7 @@ async function renderPng({ width, height, canvasJson }) {
     console.log("[/render] fabric canvas ready", {
       loadedCount: renderInfo.loadedCount,
       visibleOnCanvasCount: renderInfo.visibleOnCanvasCount,
+      nonWhiteRatio: renderInfo.nonWhiteRatio,
       objectSummary: renderInfo.objectSummary,
       dataUrlBytes: renderInfo.dataUrl.length,
     });
