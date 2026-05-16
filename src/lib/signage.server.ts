@@ -431,7 +431,16 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
     });
 
     if (!result.success) throw new Error(result.error || "Renderer returned success=false");
-    await assertRenderedPngHasContent(result.downloadUrl);
+    try {
+      await assertRenderedPngHasContent(result.downloadUrl);
+    } catch (verifyError) {
+      if (!isBlankRendererError(verifyError)) throw verifyError;
+      const fallbackUrl = await getLatestSavedTemplateImageUrl(userId, tpl.id);
+      if (!fallbackUrl) throw verifyError;
+      console.warn("[publishTemplate] renderer returned blank output; using latest saved editor image", { templateId: tpl.id });
+      result.downloadUrl = fallbackUrl;
+      await assertRenderedPngHasContent(result.downloadUrl);
+    }
 
     await supabaseAdmin
       .from("templates")
