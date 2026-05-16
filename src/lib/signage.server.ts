@@ -32,6 +32,8 @@ const PRESET_SIZES: Record<string, { w: number; h: number }> = {
   "1080x1080": { w: 1080, h: 1080 },
 };
 
+const REQUIRED_RENDERER_VERSION = "2026-05-16-inline-fabric-fallback";
+
 function extractImageStoragePath(src: string) {
   try {
     const url = new URL(src);
@@ -251,6 +253,20 @@ async function assertRenderedPngHasContent(downloadUrl: string | undefined) {
   const bytes = new Uint8Array(await res.arrayBuffer());
   if (isBlankWhitePng(bytes)) {
     throw new Error("Renderer returned a blank white PNG. The configured renderer is still running broken render code; redeploy renderer-service/server.js and retry.");
+  }
+}
+
+async function assertRendererIsCurrent(rendererUrl: string, rendererAuthToken: string | null) {
+  const health = await checkRendererHealth(rendererUrl, rendererAuthToken);
+  if (!health.ok) throw new Error(`Renderer health check failed: ${health.status} ${health.body}`);
+  let payload: { rendererVersion?: string } | null = null;
+  try {
+    payload = JSON.parse(health.body) as { rendererVersion?: string };
+  } catch {
+    // handled below
+  }
+  if (payload?.rendererVersion !== REQUIRED_RENDERER_VERSION) {
+    throw new Error("Renderer service is outdated. Redeploy renderer-service/server.js, then retry publish.");
   }
 }
 
