@@ -14,7 +14,7 @@
   "dependencies": {
     "express": "^4.21.2",
     "firebase-admin": "^13.0.2",
-    "fabric": "^6.4.3",
+    "fabric": "7.3.1",
     "puppeteer": "^23.11.1"
   }
 }
