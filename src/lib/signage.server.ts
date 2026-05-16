@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { inflateSync } from "node:zlib";
 
 export type RendererSettings = {
   user_id: string;
@@ -30,6 +31,8 @@ const PRESET_SIZES: Record<string, { w: number; h: number }> = {
   "1280x720": { w: 1280, h: 720 },
   "1080x1080": { w: 1080, h: 1080 },
 };
+
+const REQUIRED_RENDERER_VERSION = "2026-05-16-inline-fabric-fallback";
 
 function extractImageStoragePath(src: string) {
   try {
@@ -167,6 +170,106 @@ function decodeChunkedBody(body: string) {
   return decoded || body;
 }
 
+function paethPredictor(a: number, b: number, c: number) {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+}
+
+function isBlankWhitePng(bytes: Uint8Array) {
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (!signature.every((n, i) => bytes[i] === n)) return false;
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
+  const idat: Buffer[] = [];
+  while (offset + 8 <= bytes.length) {
+    const view = Buffer.from(bytes.buffer, bytes.byteOffset + offset, bytes.byteLength - offset);
+    const length = view.readUInt32BE(0);
+    const type = view.subarray(4, 8).toString("ascii");
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd > bytes.length) break;
+    const data = Buffer.from(bytes.subarray(dataStart, dataEnd));
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+      interlace = data[12];
+    } else if (type === "IDAT") {
+      idat.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+    offset = dataEnd + 4;
+  }
+
+  const bpp = colorType === 6 ? 4 : colorType === 2 ? 3 : colorType === 4 ? 2 : colorType === 0 ? 1 : 0;
+  if (!width || !height || bitDepth !== 8 || interlace !== 0 || !bpp || !idat.length) return false;
+
+  const inflated = inflateSync(Buffer.concat(idat));
+  const stride = width * bpp;
+  let src = 0;
+  let nonWhite = 0;
+  let total = 0;
+  let prev = Buffer.alloc(stride);
+  for (let y = 0; y < height; y++) {
+    const filter = inflated[src++];
+    const row = Buffer.alloc(stride);
+    for (let x = 0; x < stride; x++) {
+      const raw = inflated[src++];
+      const left = x >= bpp ? row[x - bpp] : 0;
+      const up = prev[x] ?? 0;
+      const upLeft = x >= bpp ? prev[x - bpp] ?? 0 : 0;
+      row[x] = (raw + (filter === 1 ? left : filter === 2 ? up : filter === 3 ? Math.floor((left + up) / 2) : filter === 4 ? paethPredictor(left, up, upLeft) : 0)) & 255;
+    }
+    for (let x = 0; x < width; x++) {
+      const i = x * bpp;
+      const r = colorType === 0 ? row[i] : row[i];
+      const g = colorType === 0 ? row[i] : row[i + 1];
+      const b = colorType === 0 ? row[i] : row[i + 2];
+      const a = colorType === 6 ? row[i + 3] : colorType === 4 ? row[i + 1] : 255;
+      if (a > 5) {
+        total++;
+        if (r < 250 || g < 250 || b < 250) nonWhite++;
+      }
+    }
+    prev = row;
+  }
+  return total > 0 && nonWhite / total < 0.0005;
+}
+
+async function assertRenderedPngHasContent(downloadUrl: string | undefined) {
+  if (!downloadUrl) return;
+  const res = await fetch(downloadUrl, { redirect: "follow" });
+  if (!res.ok) throw new Error(`Could not verify rendered PNG (${res.status})`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (isBlankWhitePng(bytes)) {
+    throw new Error("Renderer returned a blank white PNG. The configured renderer is still running broken render code; redeploy renderer-service/server.js and retry.");
+  }
+}
+
+async function assertRendererIsCurrent(rendererUrl: string, rendererAuthToken: string | null) {
+  const health = await checkRendererHealth(rendererUrl, rendererAuthToken);
+  if (!health.ok) throw new Error(`Renderer health check failed: ${health.status} ${health.body}`);
+  let payload: { rendererVersion?: string } | null = null;
+  try {
+    payload = JSON.parse(health.body) as { rendererVersion?: string };
+  } catch {
+    // handled below
+  }
+  if (payload?.rendererVersion !== REQUIRED_RENDERER_VERSION) {
+    throw new Error("Renderer service is outdated. Redeploy renderer-service/server.js, then retry publish.");
+  }
+}
+
 /**
  * POST a template payload to the user's external renderer service.
  * The renderer is responsible for:
@@ -228,6 +331,7 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
 
   if (!settings?.renderer_url) throw new Error("Renderer URL is not configured. Add it in Settings → Signage publishing.");
   if (!settings.company_id) throw new Error("Company ID is not configured. Add it in Settings → Signage publishing.");
+  await assertRendererIsCurrent(settings.renderer_url, settings.renderer_auth_token);
 
   const { data: tpl, error: tplErr } = await supabaseAdmin
     .from("templates")
@@ -300,6 +404,7 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
     });
 
     if (!result.success) throw new Error(result.error || "Renderer returned success=false");
+    await assertRenderedPngHasContent(result.downloadUrl);
 
     await supabaseAdmin
       .from("templates")

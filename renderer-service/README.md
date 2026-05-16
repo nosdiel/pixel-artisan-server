@@ -5,7 +5,7 @@ templates to PNG, upload to Firebase Storage, and update Firestore.
 
 ## Endpoints
 
-- `GET /health` — liveness probe (used by the "Test renderer" button in Settings).
+- `GET /health` — liveness probe (used by the "Test renderer" button in Settings). Must return `rendererVersion: "2026-05-16-inline-fabric-fallback"` after deploying this fix.
 - `POST /render` — body `{ templateId, companyId, name, width, height, canvasJson, squareData }`.
   Returns `{ success, downloadUrl }`.
 
@@ -64,3 +64,9 @@ gcloud run deploy signage-renderer \
 
 Render/Fly/Railway also work — point them at the included `Dockerfile`.
 If you deploy without the Dockerfile, make sure Chrome and its Linux libraries are installed; otherwise publish can fail with errors like `libatk-1.0.so.0: cannot open shared object file`.
+
+## Verify deployment
+
+After redeploying, open `/health` on the renderer URL. If the response does not include
+`"rendererVersion":"2026-05-16-inline-fabric-fallback"`, the app will block publish because
+the old renderer returns blank white PNGs even for simple colored canvases.
