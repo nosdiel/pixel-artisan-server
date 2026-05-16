@@ -393,6 +393,7 @@ function TemplatesPage() {
     });
 
     const videos: HTMLVideoElement[] = [];
+    const videoLayers: VideoLayer[] = [];
     let rafId: number | null = null;
     let recorder: MediaRecorder | null = null;
 
@@ -421,6 +422,7 @@ function TemplatesPage() {
             (fabricObj as any).setElement(v);
             (fabricObj as any).objectCaching = false;
             videos.push(v);
+            videoLayers.push({ video: v, json: j });
           }
 
           const childJson = (j?.objects ?? j?._objects ?? []) as any[];
@@ -445,13 +447,18 @@ function TemplatesPage() {
 
       // RAF loop: keep re-rendering so videos animate, and explicitly push
       // canvas frames when the browser exposes CanvasCaptureMediaStreamTrack.
-      const tick = () => {
+      const ctx = canvasEl.getContext("2d");
+      if (!ctx) throw new Error("Could not create video recording canvas context");
+      const renderFrame = () => {
         staticCanvas.renderAll();
+        for (const layer of videoLayers) drawVideoLayer(ctx, layer);
         requestCanvasFrame?.();
+      };
+      const tick = () => {
+        renderFrame();
         rafId = requestAnimationFrame(tick);
       };
-      staticCanvas.renderAll();
-      requestCanvasFrame?.();
+      renderFrame();
       rafId = requestAnimationFrame(tick);
 
       const recorderMime = pickRecorderMimeType();
@@ -479,8 +486,7 @@ function TemplatesPage() {
       await Promise.all(videos.map((v) => waitForVideoFrame(v, v.currentSrc || v.src)));
       // Give the canvas a couple of frames before opening the recorder.
       await waitForAnimationFrames(3);
-      staticCanvas.renderAll();
-      requestCanvasFrame?.();
+      renderFrame();
       recorder.start(250);
       window.setTimeout(() => {
         try { recorder?.state === "recording" && recorder.stop(); } catch {}
