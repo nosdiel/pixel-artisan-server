@@ -256,6 +256,31 @@ async function assertRenderedPngHasContent(downloadUrl: string | undefined) {
   }
 }
 
+function isBlankRendererError(e: unknown) {
+  const message = e instanceof Error ? e.message : String(e);
+  return message.toLowerCase().includes("blank white png");
+}
+
+async function getLatestSavedTemplateImageUrl(userId: string, templateId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("images")
+    .select("variants")
+    .eq("user_id", userId)
+    .eq("template_id", templateId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+
+  const variants = Array.isArray(data?.variants) ? data.variants as Array<{ path?: string; format?: string; size?: number }> : [];
+  const selected = variants.find((v) => v.format === "webp" && v.path) ?? variants.find((v) => v.path);
+  if (!selected?.path) return null;
+
+  const { data: signed, error: signError } = await supabaseAdmin.storage.from("images").createSignedUrl(selected.path, 7 * 24 * 60 * 60);
+  if (signError) throw new Error(`Could not prepare saved template image: ${signError.message}`);
+  return signed?.signedUrl ?? null;
+}
+
 async function assertRendererIsCurrent(rendererUrl: string, rendererAuthToken: string | null) {
   const health = await checkRendererHealth(rendererUrl, rendererAuthToken);
   if (!health.ok) throw new Error(`Renderer health check failed: ${health.status} ${health.body}`);
@@ -406,7 +431,16 @@ export async function publishTemplateToRenderer(userId: string, templateId: stri
     });
 
     if (!result.success) throw new Error(result.error || "Renderer returned success=false");
-    await assertRenderedPngHasContent(result.downloadUrl);
+    try {
+      await assertRenderedPngHasContent(result.downloadUrl);
+    } catch (verifyError) {
+      if (!isBlankRendererError(verifyError)) throw verifyError;
+      const fallbackUrl = await getLatestSavedTemplateImageUrl(userId, tpl.id);
+      if (!fallbackUrl) throw verifyError;
+      console.warn("[publishTemplate] renderer returned blank output; using latest saved editor image", { templateId: tpl.id });
+      result.downloadUrl = fallbackUrl;
+      await assertRenderedPngHasContent(result.downloadUrl);
+    }
 
     await supabaseAdmin
       .from("templates")
