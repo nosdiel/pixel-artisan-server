@@ -42,6 +42,10 @@ type SquareCacheItem = { square_item_id: string; name: string | null; descriptio
 type SquareField = "price" | "name" | "description";
 type SquareBinding = { itemId: string; field: SquareField };
 
+function getCanvasSize(presetKey: string) {
+  return PRESETS[presetKey] ?? PRESETS["1920x1080"];
+}
+
 function formatSquareValue(item: SquareCacheItem | undefined, field: SquareField): string {
   if (!item) return "";
   if (field === "name") return item.name ?? "";
@@ -139,7 +143,7 @@ function EditorPage() {
 
   const getFitZoom = useCallback((presetKey = preset) => {
     const host = canvasHostRef.current;
-    const { w, h } = PRESETS[presetKey];
+    const { w, h } = getCanvasSize(presetKey);
     if (!host) return Math.min(0.4, 720 / h, 900 / w);
     const availableWidth = Math.max(host.clientWidth - 64, 320);
     const availableHeight = Math.max(host.clientHeight - 64, 320);
@@ -251,7 +255,7 @@ function EditorPage() {
   // Initialize canvas
   useEffect(() => {
     if (!fabric || !canvasRef.current) return;
-    const { w, h } = PRESETS[preset];
+    const { w, h } = getCanvasSize(preset);
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
     const fittedZoom = getFitZoom(preset);
