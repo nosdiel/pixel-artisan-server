@@ -213,8 +213,8 @@ function isBlankWhitePng(bytes: Uint8Array) {
   const bpp = colorType === 6 ? 4 : colorType === 2 ? 3 : colorType === 4 ? 2 : colorType === 0 ? 1 : 0;
   if (!width || !height || bitDepth !== 8 || interlace !== 0 || !bpp || !idat.length) return false;
 
+  const { inflateSync } = require("node:zlib") as typeof import("node:zlib");
   const inflated = inflateSync(Buffer.concat(idat));
-  // placeholder
   const stride = width * bpp;
   let src = 0;
   let nonWhite = 0;
