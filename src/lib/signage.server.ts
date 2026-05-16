@@ -29,39 +29,43 @@ export async function checkRendererHealth(rendererUrl: string, rendererAuthToken
   const headers: Record<string, string> = { Accept: "application/json, text/plain, */*" };
   if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
 
-  if (parsed.protocol !== "http:") {
-    const res = await fetch(url, { method: "GET", headers, redirect: "follow" });
-    const body = await res.text();
-    return { ok: res.ok, status: res.status, statusText: res.statusText, url, body: body.slice(0, 2000) };
-  }
+  if (parsed.protocol === "http:") return rawHttpRequest("GET", parsed, headers);
 
+  const res = await fetch(url, { method: "GET", headers, redirect: "follow" });
+  const body = await res.text();
+  return { ok: res.ok, status: res.status, statusText: res.statusText, url, body: body.slice(0, 2000) };
+}
+
+async function rawHttpRequest(method: "GET" | "POST", parsed: URL, headers: Record<string, string>, body = ""): Promise<RendererHealthResponse> {
+  const url = parsed.toString();
   return new Promise((resolve) => {
     const port = parsed.port ? Number(parsed.port) : 80;
     import("node:net")
       .then(({ createConnection }) => {
         const socket = createConnection({ host: parsed.hostname, port });
-    let raw = "";
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolve(parseRawHttpResponse(raw, url));
-    };
+        let raw = "";
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          resolve(parseRawHttpResponse(raw, url));
+        };
 
-    socket.setTimeout(15000);
-    socket.on("connect", () => {
-      const authLine = rawToken ? `Authorization: Bearer ${rawToken}\r\n` : "";
-      socket.write(`GET ${parsed.pathname}${parsed.search} HTTP/1.1\r\nHost: ${parsed.host}\r\nAccept: ${headers.Accept}\r\n${authLine}Connection: close\r\n\r\n`);
-    });
-    socket.on("data", (chunk) => { raw += chunk.toString(); });
-    socket.on("end", finish);
-    socket.on("close", finish);
-    socket.on("timeout", () => socket.destroy(new Error("Renderer health check timed out after 15 seconds")));
-    socket.on("error", (e) => {
-      if (settled) return;
-      settled = true;
-      resolve({ ok: false, status: 0, statusText: "Request failed", url, body: e.message });
-    });
+        socket.setTimeout(15000);
+        socket.on("connect", () => {
+          const headerLines = Object.entries(headers).map(([key, value]) => `${key}: ${value}`).join("\r\n");
+          const bodyHeaders = body ? `\r\nContent-Length: ${Buffer.byteLength(body)}` : "";
+          socket.write(`${method} ${parsed.pathname}${parsed.search} HTTP/1.1\r\nHost: ${parsed.host}\r\n${headerLines}${bodyHeaders}\r\nConnection: close\r\n\r\n${body}`);
+        });
+        socket.on("data", (chunk) => { raw += chunk.toString(); });
+        socket.on("end", finish);
+        socket.on("close", finish);
+        socket.on("timeout", () => socket.destroy(new Error("Renderer request timed out after 15 seconds")));
+        socket.on("error", (e) => {
+          if (settled) return;
+          settled = true;
+          resolve({ ok: false, status: 0, statusText: "Request failed", url, body: e.message });
+        });
       })
       .catch((e) => {
         const message = e instanceof Error ? e.message : String(e);
