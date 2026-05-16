@@ -137,6 +137,7 @@ function waitForVideoCanPlay(video: HTMLVideoElement, label: string, timeoutMs =
 }
 
 function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5_000) {
+  const target = video as HTMLVideoElement;
   return new Promise<void>((resolve, reject) => {
     let done = false;
     const finish = (error?: Error) => {
@@ -155,14 +156,15 @@ function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5
       finish(error);
     };
 
-    if ("requestVideoFrameCallback" in video) {
-      (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(() => cleanupFinish());
+    const requestVideoFrameCallback = (target as any).requestVideoFrameCallback as ((cb: () => void) => number) | undefined;
+    if (typeof requestVideoFrameCallback === "function") {
+      requestVideoFrameCallback.call(target, () => cleanupFinish());
       return;
     }
 
     const startedAt = performance.now();
     const check = () => {
-      if (video.readyState >= 2 && video.currentTime > 0) cleanupFinish();
+      if (target.readyState >= 2 && target.currentTime > 0) cleanupFinish();
       else if (performance.now() - startedAt > timeoutMs) cleanupFinish(new Error(`Timed out waiting for video frame: ${label}`));
       else requestAnimationFrame(check);
     };
