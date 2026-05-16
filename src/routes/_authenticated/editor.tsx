@@ -700,12 +700,13 @@ function EditorPage() {
     video.width = vw;
     video.height = vh;
     const img = new fabric.FabricImage(video, { objectCaching: false, width: vw, height: vh });
-    const max = Math.min(fc.width! * 0.6, fc.height! * 0.6);
+    const { w, h } = getCanvasSize(preset);
+    const max = Math.min(w * 0.6, h * 0.6);
     const scale = Math.min(max / vw, max / vh, 1);
     img.scale(scale);
     img.set({
-      left: (fc.width! - vw * scale) / 2,
-      top: (fc.height! - vh * scale) / 2,
+      left: (w - vw * scale) / 2,
+      top: (h - vh * scale) / 2,
     });
     if (path) img.set("videoStoragePath", path);
     fc.add(img); fc.setActiveObject(img); fc.requestRenderAll();
@@ -745,15 +746,17 @@ function EditorPage() {
   };
   const addText = () => {
     const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
     const t = new fabric.IText("Your text", {
-      left: fc.width! / 2 - 200, top: fc.height! / 2 - 40, fontSize: 80, fill: "#111827",
+      left: w / 2 - 200, top: h / 2 - 40, fontSize: 80, fill: "#111827",
       fontFamily: "Inter", originX: "left", originY: "top",
     });
     fc.add(t); fc.setActiveObject(t); fc.renderAll();
   };
   const addShape = (kind: "rect" | "circle" | "triangle") => {
     const fc = fcRef.current; if (!fc || !fabric) return;
-    const common = { left: fc.width! / 2 - 150, top: fc.height! / 2 - 150, fill: "#3b82f6" };
+    const { w, h } = getCanvasSize(preset);
+    const common = { left: w / 2 - 150, top: h / 2 - 150, fill: "#3b82f6" };
     let o: Fabric.Object;
     if (kind === "rect") o = new fabric.Rect({ ...common, width: 300, height: 200 });
     else if (kind === "circle") o = new fabric.Circle({ ...common, radius: 120 });
