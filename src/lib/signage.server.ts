@@ -17,7 +17,7 @@ const PRESET_SIZES: Record<string, { w: number; h: number }> = {
   "1080x1080": { w: 1080, h: 1080 },
 };
 
-const REQUIRED_RENDERER_VERSION = "2026-05-16-browser-render-upload-blank-check";
+const REQUIRED_RENDERER_VERSION = "2026-05-16-video-upload";
 
 function rendererUpgradeMessage(actualVersion?: string | null) {
   const actual = actualVersion ? ` Current /health rendererVersion is "${actualVersion}".` : "";
@@ -74,13 +74,25 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
   const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
   let refreshedImages = 0;
   let inlinedImageBytes = 0;
+  let refreshedVideos = 0;
   const refreshObject = async (obj: any): Promise<void> => {
     if (!obj || typeof obj !== "object") return;
-    const path = typeof obj.imageStoragePath === "string"
+    // Refresh video signed URLs in place (we can't inline videos as base64
+    // — they're too large — so keep them as fresh signed URLs).
+    const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : null;
+    if (videoPath) {
+      const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(videoPath, 3600);
+      if (error) throw new Error(`Could not refresh video URL for render: ${error.message}`);
+      if (data?.signedUrl) {
+        obj.videoSrc = data.signedUrl;
+        refreshedVideos++;
+      }
+    }
+    const path = videoPath ? null : (typeof obj.imageStoragePath === "string"
       ? obj.imageStoragePath
       : typeof obj.src === "string"
         ? extractImageStoragePath(obj.src)
-        : null;
+        : null);
     if (path) {
       const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(path, 3600);
       if (error) throw new Error(`Could not refresh image URL for render: ${error.message}`);
@@ -103,7 +115,7 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
   };
   await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
   if (json.backgroundImage) await refreshObject(json.backgroundImage);
-  return { canvasJson: json, refreshedImages, inlinedImageBytes };
+  return { canvasJson: json, refreshedImages, inlinedImageBytes, refreshedVideos };
 }
 
 /**
@@ -205,7 +217,7 @@ export async function prepareTemplateForBrowserRender(userId: string, templateId
     throw new Error("Template has no objects.");
   }
 
-  const { canvasJson, refreshedImages, inlinedImageBytes } = await refreshCanvasMediaUrls(originalCanvasJson);
+  const { canvasJson, refreshedImages, inlinedImageBytes, refreshedVideos } = await refreshCanvasMediaUrls(originalCanvasJson);
   const normalizedImages = normalizeOversizedBaseImages(canvasJson, renderWidth, renderHeight);
   console.log("[prepareTemplate]", {
     templateId: tpl.id,
@@ -215,6 +227,7 @@ export async function prepareTemplateForBrowserRender(userId: string, templateId
     objectCount,
     refreshedImages,
     inlinedImageBytes,
+    refreshedVideos,
     normalizedImages,
   });
 
