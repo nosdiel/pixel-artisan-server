@@ -1,5 +1,4 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { inflateSync } from "node:zlib";
 
 export type RendererSettings = {
   user_id: string;
@@ -215,6 +214,7 @@ function isBlankWhitePng(bytes: Uint8Array) {
   if (!width || !height || bitDepth !== 8 || interlace !== 0 || !bpp || !idat.length) return false;
 
   const inflated = inflateSync(Buffer.concat(idat));
+  // placeholder
   const stride = width * bpp;
   let src = 0;
   let nonWhite = 0;
