@@ -14,7 +14,7 @@ const zlib = require("zlib");
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
-const RENDERER_VERSION = "2026-05-16-browser-render-upload";
+const RENDERER_VERSION = "2026-05-16-browser-render-upload-blank-check";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
