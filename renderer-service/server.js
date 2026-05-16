@@ -230,17 +230,17 @@ async function renderPng({ width, height, canvasJson }) {
         renderOnAddRemove: false,
       });
 
-      // Wrap loadFromJSON in an explicit Promise; supports both Fabric v5 (callback) and v6 (Promise).
-      await new Promise((resolve, reject) => {
-        try {
-          const result = canvas.loadFromJSON(json, () => resolve());
-          if (result && typeof result.then === "function") {
-            result.then(() => resolve()).catch(reject);
-          }
-        } catch (e) {
-          reject(e);
-        }
-      });
+      // Fabric 7 returns a Promise from loadFromJSON. Do not pass a callback:
+      // in newer Fabric versions the second argument is a reviver, which can
+      // resolve too early and produce a white export.
+      const loadResult = canvas.loadFromJSON(json);
+      if (!loadResult || typeof loadResult.then !== "function") {
+        throw new Error("Local Fabric loadFromJSON did not return a Promise; reinstall fabric@7.3.1 in renderer-service");
+      }
+      await Promise.race([
+        loadResult,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out loading Fabric JSON")), 60000)),
+      ]);
 
       const allObjects = canvas.getObjects();
       if (allObjects.length === 0) throw new Error("Fabric loaded 0 objects from canvas JSON");
@@ -277,16 +277,6 @@ async function renderPng({ width, height, canvasJson }) {
       if (visibleOnCanvas.length === 0) {
         throw new Error("Fabric loaded objects, but none are visible within the render canvas");
       }
-
-      // Wait for any <img> resources referenced by fabric objects to finish loading
-      const imgs = Array.from(document.images || []);
-      await Promise.all(
-        imgs.map((img) =>
-          img.complete
-            ? Promise.resolve()
-            : new Promise((r) => { img.onload = img.onerror = r; }),
-        ),
-      );
 
       // Wait for fonts (custom or web fonts used in text objects)
       if (document.fonts && document.fonts.ready) {
