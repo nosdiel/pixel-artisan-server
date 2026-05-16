@@ -5,6 +5,7 @@ import {
   checkRendererHealth,
   prepareTemplateForBrowserRender,
   uploadRenderedPng,
+  uploadRenderedVideo,
 } from "./signage.server";
 
 export const getSignageSettings = createServerFn({ method: "GET" })
@@ -103,6 +104,26 @@ export const publishRenderedTemplate = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     return uploadRenderedPng(context.userId, data);
+  });
+
+/**
+ * Step 2 (video variant): takes a browser-recorded MP4 or WebM (base64) and
+ * forwards it to the upload service.
+ */
+export const publishRenderedVideoTemplate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      templateId: z.string().uuid(),
+      videoBase64: z.string().min(64).max(150 * 1024 * 1024),
+      mimeType: z.enum(["video/mp4", "video/webm"]),
+      width: z.number().int().positive().max(20000).optional(),
+      height: z.number().int().positive().max(20000).optional(),
+      durationMs: z.number().int().positive().max(120000).optional(),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    return uploadRenderedVideo(context.userId, data);
   });
 
 export const listTemplatesWithPublishStatus = createServerFn({ method: "GET" })
