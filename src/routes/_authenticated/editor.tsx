@@ -487,11 +487,12 @@ function EditorPage() {
         fc.clear();
         fc.backgroundColor = bgColor;
         const img = await fabric.FabricImage.fromURL(pendingBaseImage.url, { crossOrigin: "anonymous" });
-        const scale = Math.min(fc.width! / img.width!, fc.height! / img.height!);
+        const { w, h } = getCanvasSize(preset);
+        const scale = Math.min(w / img.width!, h / img.height!);
         img.scale(scale);
         img.set({
-          left: (fc.width! - img.width! * scale) / 2,
-          top: (fc.height! - img.height! * scale) / 2,
+          left: (w - img.width! * scale) / 2,
+          top: (h - img.height! * scale) / 2,
           selectable: true,
           imageStoragePath: pendingBaseImage.path,
         });
@@ -515,9 +516,10 @@ function EditorPage() {
   useEffect(() => {
     const fc = fcRef.current;
     if (!fc) return;
-    const { w, h } = PRESETS[preset];
+    const { w, h } = getCanvasSize(preset);
     fc.setZoom(zoom);
-    fc.setDimensions({ width: w * zoom, height: h * zoom });
+    fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
+    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
     fc.requestRenderAll();
   }, [zoom, preset]);
 
