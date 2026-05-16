@@ -339,51 +339,39 @@ function TemplatesPage() {
 
       // For every object that originated from a video, swap its FabricImage
       // backing element to an HTMLVideoElement that plays the signed URL.
-      const jsonObjs = (prep.canvasJson.objects ?? []) as any[];
-      for (let i = 0; i < jsonObjs.length; i++) {
-        const j = jsonObjs[i];
-        const videoSrc: string | undefined = j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
-        if (!videoSrc) continue;
-        const fabricObj = objs[i];
-        if (!(fabricObj instanceof fabric.FabricImage)) continue;
+      const attachVideos = async (jsonList: any[], fabricList: any[]) => {
+        for (let i = 0; i < jsonList.length; i++) {
+          const j = jsonList[i];
+          const fabricObj = fabricList[i];
+          const videoSrc: string | undefined = j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
 
-        const v = document.createElement("video");
-        v.crossOrigin = "anonymous";
-        v.muted = true;
-        v.playsInline = true;
-        v.loop = false;
-        v.preload = "auto";
-        v.src = videoSrc;
-        await new Promise<void>((resolve, reject) => {
-          v.onloadeddata = () => resolve();
-          v.onerror = () => reject(new Error(`Failed to load video: ${videoSrc}`));
-        });
-        // Replace the element backing the Fabric image with the video.
-        (fabricObj as any).setElement(v);
-        (fabricObj as any).objectCaching = false;
-        videos.push(v);
-      }
+          if (videoSrc && fabricObj instanceof fabric.FabricImage) {
+            const v = document.createElement("video");
+            v.crossOrigin = "anonymous";
+            v.muted = true;
+            v.playsInline = true;
+            v.loop = true;
+            v.preload = "auto";
+            v.src = videoSrc;
+            await waitForVideoCanPlay(v, videoSrc);
+            (fabricObj as any).setElement(v);
+            (fabricObj as any).objectCaching = false;
+            videos.push(v);
+          }
+
+          const childJson = (j?.objects ?? j?._objects ?? []) as any[];
+          const childFabric = typeof fabricObj?.getObjects === "function" ? fabricObj.getObjects() : [];
+          if (childJson.length && childFabric.length) await attachVideos(childJson, childFabric);
+        }
+      };
+
+      await attachVideos((prep.canvasJson.objects ?? []) as any[], objs as any[]);
 
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
 
-      // Resolve a reliable duration. Some MP4s report Infinity until you seek
-      // to the end; do that dance so we always get a finite seconds value.
-      async function resolveDuration(v: HTMLVideoElement): Promise<number> {
-        if (Number.isFinite(v.duration) && v.duration > 0) return v.duration;
-        return await new Promise<number>((resolve) => {
-          const onSeeked = () => {
-            v.removeEventListener("seeked", onSeeked);
-            const d = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 5;
-            try { v.currentTime = 0; } catch {}
-            resolve(d);
-          };
-          v.addEventListener("seeked", onSeeked);
-          try { v.currentTime = 1e9; } catch { resolve(5); }
-        });
-      }
-      const durations = await Promise.all(videos.map(resolveDuration));
-      const longest = Math.max(...durations, 1);
-      const maxDur = Math.min(30, longest);
+      const durations = await Promise.all(videos.map((v) => resolveVideoDuration(v, VIDEO_RECORDING_MIN_SECONDS)));
+      const longest = Math.max(...durations, VIDEO_RECORDING_MIN_SECONDS);
+      const maxDur = Math.min(VIDEO_RECORDING_MAX_SECONDS, Math.max(VIDEO_RECORDING_MIN_SECONDS, longest));
 
       // RAF loop: keep re-rendering so videos animate. Draw at least one
       // frame before recording starts so the captureStream has real content.
@@ -394,17 +382,7 @@ function TemplatesPage() {
       staticCanvas.renderAll();
       rafId = requestAnimationFrame(tick);
 
-      // Pick a supported recorder mimeType, MP4 preferred.
-      const candidates = [
-        "video/mp4;codecs=avc1",
-        "video/mp4",
-        "video/webm;codecs=vp9",
-        "video/webm;codecs=vp8",
-        "video/webm",
-      ];
-      const recorderMime = candidates.find((m) =>
-        typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
-      );
+      const recorderMime = pickRecorderMimeType();
       if (!recorderMime) throw new Error("Browser does not support MediaRecorder for video output");
 
       const stream = (canvasEl as HTMLCanvasElement).captureStream(30);
