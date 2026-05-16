@@ -5,7 +5,7 @@ templates to PNG, upload to Firebase Storage, and update Firestore.
 
 ## Endpoints
 
-- `GET /health` — liveness probe (used by the "Test renderer" button in Settings). Must return `rendererVersion: "2026-05-16-fabric7-blank-guard"` after deploying this fix.
+- `GET /health` — liveness probe (used by the "Test renderer" button in Settings). Must return `rendererVersion: "2026-05-16-fabric7-page-render-state"` after deploying this fix.
 - `POST /render` — body `{ templateId, companyId, name, width, height, canvasJson, squareData }`.
   Returns `{ success, downloadUrl }`.
 
@@ -68,4 +68,4 @@ If you deploy without the Dockerfile, make sure Chrome and its Linux libraries a
 ## Verify deployment
 
 After redeploying, open `/health` on the renderer URL. If the response does not include
-`"rendererVersion":"2026-05-16-fabric7-blank-guard"`, the app is still calling old render code that can upload blank white PNGs.
+`"rendererVersion":"2026-05-16-fabric7-page-render-state"`, the app is still calling old render code that can upload blank white PNGs.
