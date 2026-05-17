@@ -34,18 +34,34 @@ async function assertRendererSupportsUpload(rendererUrl: string, rendererAuthTok
   }
 
   if (!health.ok) {
-    throw new Error(`Renderer /health failed (${health.status} ${health.statusText}): ${health.body.slice(0, 300)}`);
+    throw new Error(
+      `Renderer /health failed (${health.status} ${health.statusText}): ${health.body.slice(0, 300)}`,
+    );
   }
 
   let parsed: { rendererVersion?: string };
   try {
     parsed = JSON.parse(health.body) as { rendererVersion?: string };
   } catch {
-    throw new Error(`Renderer /health returned non-JSON, so upload support cannot be verified: ${health.body.slice(0, 300)}`);
+    throw new Error(
+      `Renderer /health returned non-JSON, so upload support cannot be verified: ${health.body.slice(0, 300)}`,
+    );
   }
 
   if (parsed.rendererVersion !== REQUIRED_RENDERER_VERSION) {
     throw new Error(rendererUpgradeMessage(parsed.rendererVersion ?? null));
+  }
+}
+
+async function warnIfRendererHealthCheckFails(
+  rendererUrl: string,
+  rendererAuthToken: string | null,
+) {
+  try {
+    await assertRendererSupportsUpload(rendererUrl, rendererAuthToken);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.warn("[renderer health preflight skipped]", message);
   }
 }
 
@@ -81,20 +97,26 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
     // — they're too large — so keep them as fresh signed URLs).
     const videoPath = typeof obj.videoStoragePath === "string" ? obj.videoStoragePath : null;
     if (videoPath) {
-      const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(videoPath, 3600);
+      const { data, error } = await supabaseAdmin.storage
+        .from("images")
+        .createSignedUrl(videoPath, 3600);
       if (error) throw new Error(`Could not refresh video URL for render: ${error.message}`);
       if (data?.signedUrl) {
         obj.videoSrc = data.signedUrl;
         refreshedVideos++;
       }
     }
-    const path = videoPath ? null : (typeof obj.imageStoragePath === "string"
-      ? obj.imageStoragePath
-      : typeof obj.src === "string"
-        ? extractImageStoragePath(obj.src)
-        : null);
+    const path = videoPath
+      ? null
+      : typeof obj.imageStoragePath === "string"
+        ? obj.imageStoragePath
+        : typeof obj.src === "string"
+          ? extractImageStoragePath(obj.src)
+          : null;
     if (path) {
-      const { data, error } = await supabaseAdmin.storage.from("images").createSignedUrl(path, 3600);
+      const { data, error } = await supabaseAdmin.storage
+        .from("images")
+        .createSignedUrl(path, 3600);
       if (error) throw new Error(`Could not refresh image URL for render: ${error.message}`);
       if (data?.signedUrl) {
         const imageRes = await fetch(data.signedUrl, { redirect: "follow" });
@@ -160,7 +182,10 @@ function normalizeOversizedBaseImages(canvasJson: any, canvasW: number, canvasH:
   return fixed;
 }
 
-export async function checkRendererHealth(rendererUrl: string, rendererAuthToken: string | null): Promise<RendererHealthResponse> {
+export async function checkRendererHealth(
+  rendererUrl: string,
+  rendererAuthToken: string | null,
+): Promise<RendererHealthResponse> {
   const url = rendererUrl.replace(/\/+$/, "") + "/health";
   const rawToken = rendererAuthToken?.trim().replace(/^Bearer\s+/i, "") ?? "";
   const headers: Record<string, string> = { Accept: "application/json, text/plain, */*" };
@@ -168,7 +193,13 @@ export async function checkRendererHealth(rendererUrl: string, rendererAuthToken
 
   const res = await fetch(url, { method: "GET", headers, redirect: "follow" });
   const body = await res.text();
-  return { ok: res.ok, status: res.status, statusText: res.statusText, url, body: body.slice(0, 2000) };
+  return {
+    ok: res.ok,
+    status: res.status,
+    statusText: res.statusText,
+    url,
+    body: body.slice(0, 2000),
+  };
 }
 
 async function getRendererSettings(userId: string) {
@@ -177,8 +208,10 @@ async function getRendererSettings(userId: string) {
     .select("company_id, renderer_url, renderer_auth_token")
     .eq("user_id", userId)
     .maybeSingle();
-  if (!settings?.renderer_url) throw new Error("Renderer URL is not configured. Add it in Settings → Signage publishing.");
-  if (!settings.company_id) throw new Error("Company ID is not configured. Add it in Settings → Signage publishing.");
+  if (!settings?.renderer_url)
+    throw new Error("Renderer URL is not configured. Add it in Settings → Signage publishing.");
+  if (!settings.company_id)
+    throw new Error("Company ID is not configured. Add it in Settings → Signage publishing.");
   return settings;
 }
 
@@ -204,7 +237,9 @@ export async function prepareTemplateForBrowserRender(userId: string, templateId
   const renderHeight = presetSize?.h ?? tpl.height;
 
   const originalCanvasJson = tpl.canvas_json as { objects?: unknown[] } | null;
-  const objectCount = Array.isArray(originalCanvasJson?.objects) ? originalCanvasJson!.objects!.length : 0;
+  const objectCount = Array.isArray(originalCanvasJson?.objects)
+    ? originalCanvasJson!.objects!.length
+    : 0;
   if (!originalCanvasJson || objectCount === 0) {
     await supabaseAdmin
       .from("templates")
@@ -217,7 +252,8 @@ export async function prepareTemplateForBrowserRender(userId: string, templateId
     throw new Error("Template has no objects.");
   }
 
-  const { canvasJson, refreshedImages, inlinedImageBytes, refreshedVideos } = await refreshCanvasMediaUrls(originalCanvasJson);
+  const { canvasJson, refreshedImages, inlinedImageBytes, refreshedVideos } =
+    await refreshCanvasMediaUrls(originalCanvasJson);
   const normalizedImages = normalizeOversizedBaseImages(canvasJson, renderWidth, renderHeight);
   console.log("[prepareTemplate]", {
     templateId: tpl.id,
@@ -274,7 +310,7 @@ export async function uploadRenderedPng(
   });
 
   try {
-    await assertRendererSupportsUpload(settings.renderer_url!, settings.renderer_auth_token);
+    await warnIfRendererHealthCheckFails(settings.renderer_url!, settings.renderer_auth_token);
 
     const res = await fetch(url, {
       method: "POST",
@@ -381,7 +417,7 @@ export async function uploadRenderedVideo(
   });
 
   try {
-    await assertRendererSupportsUpload(settings.renderer_url!, settings.renderer_auth_token);
+    await warnIfRendererHealthCheckFails(settings.renderer_url!, settings.renderer_auth_token);
 
     const res = await fetch(url, {
       method: "POST",
