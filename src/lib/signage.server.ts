@@ -87,11 +87,29 @@ function mimeForStoragePath(path: string) {
 }
 
 async function refreshCanvasMediaUrls(canvasJson: unknown) {
-  const json = JSON.parse(JSON.stringify(canvasJson)) as Record<string, any>;
+  type FabricNode = {
+    type?: string;
+    src?: string;
+    crossOrigin?: string;
+    imageStoragePath?: string;
+    videoStoragePath?: string;
+    videoSrc?: string;
+    width?: number;
+    height?: number;
+    scaleX?: number;
+    scaleY?: number;
+    left?: number;
+    top?: number;
+    objects?: FabricNode[];
+    _objects?: FabricNode[];
+    clipPath?: FabricNode;
+    backgroundImage?: FabricNode;
+  };
+  const json = JSON.parse(JSON.stringify(canvasJson)) as FabricNode;
   let refreshedImages = 0;
   let inlinedImageBytes = 0;
   let refreshedVideos = 0;
-  const refreshObject = async (obj: any): Promise<void> => {
+  const refreshObject = async (obj: FabricNode | null | undefined): Promise<void> => {
     if (!obj || typeof obj !== "object") return;
     // Refresh video signed URLs in place (we can't inline videos as base64
     // — they're too large — so keep them as fresh signed URLs).
@@ -132,10 +150,10 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
         inlinedImageBytes += bytes.length;
       }
     }
-    await Promise.all(((obj.objects ?? obj._objects ?? []) as any[]).map(refreshObject));
+    await Promise.all((obj.objects ?? obj._objects ?? []).map(refreshObject));
     if (obj.clipPath) await refreshObject(obj.clipPath);
   };
-  await Promise.all(((json.objects ?? []) as any[]).map(refreshObject));
+  await Promise.all((json.objects ?? []).map(refreshObject));
   if (json.backgroundImage) await refreshObject(json.backgroundImage);
   return { canvasJson: json, refreshedImages, inlinedImageBytes, refreshedVideos };
 }
@@ -152,9 +170,13 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
  * leaves intentionally-cropped images alone but fixes the common bug where
  * the base image overflows the canvas.
  */
-function normalizeOversizedBaseImages(canvasJson: any, canvasW: number, canvasH: number) {
+function normalizeOversizedBaseImages(
+  canvasJson: Record<string, unknown>,
+  canvasW: number,
+  canvasH: number,
+) {
   let fixed = 0;
-  const visit = (obj: any) => {
+  const visit = (obj: Record<string, unknown> | null | undefined) => {
     if (!obj || typeof obj !== "object") return;
     if (obj.type === "Image" || obj.type === "image") {
       const naturalW = Number(obj.width) || 0;
@@ -174,11 +196,12 @@ function normalizeOversizedBaseImages(canvasJson: any, canvasW: number, canvasH:
         fixed++;
       }
     }
-    for (const child of (obj.objects ?? obj._objects ?? []) as any[]) visit(child);
-    if (obj.clipPath) visit(obj.clipPath);
+    const children = (obj.objects ?? obj._objects ?? []) as Record<string, unknown>[];
+    for (const child of children) visit(child);
+    if (obj.clipPath) visit(obj.clipPath as Record<string, unknown>);
   };
-  for (const o of (canvasJson.objects ?? []) as any[]) visit(o);
-  if (canvasJson.backgroundImage) visit(canvasJson.backgroundImage);
+  for (const o of (canvasJson.objects ?? []) as Record<string, unknown>[]) visit(o);
+  if (canvasJson.backgroundImage) visit(canvasJson.backgroundImage as Record<string, unknown>);
   return fixed;
 }
 
