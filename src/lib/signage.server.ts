@@ -49,6 +49,15 @@ async function assertRendererSupportsUpload(rendererUrl: string, rendererAuthTok
   }
 }
 
+async function warnIfRendererHealthCheckFails(rendererUrl: string, rendererAuthToken: string | null) {
+  try {
+    await assertRendererSupportsUpload(rendererUrl, rendererAuthToken);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.warn("[renderer health preflight skipped]", message);
+  }
+}
+
 function extractImageStoragePath(src: string) {
   try {
     const url = new URL(src);
@@ -274,7 +283,7 @@ export async function uploadRenderedPng(
   });
 
   try {
-    await assertRendererSupportsUpload(settings.renderer_url!, settings.renderer_auth_token);
+    await warnIfRendererHealthCheckFails(settings.renderer_url!, settings.renderer_auth_token);
 
     const res = await fetch(url, {
       method: "POST",
@@ -381,7 +390,7 @@ export async function uploadRenderedVideo(
   });
 
   try {
-    await assertRendererSupportsUpload(settings.renderer_url!, settings.renderer_auth_token);
+    await warnIfRendererHealthCheckFails(settings.renderer_url!, settings.renderer_auth_token);
 
     const res = await fetch(url, {
       method: "POST",
