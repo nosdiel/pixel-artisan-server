@@ -201,8 +201,7 @@ function normalizeOversizedBaseImages(
     if (obj.clipPath) visit(obj.clipPath as Record<string, unknown>);
   };
   for (const o of (canvasJson.objects ?? []) as Record<string, unknown>[]) visit(o);
-  if (canvasJson.backgroundImage)
-    visit(canvasJson.backgroundImage as Record<string, unknown>);
+  if (canvasJson.backgroundImage) visit(canvasJson.backgroundImage as Record<string, unknown>);
   return fixed;
 }
 
