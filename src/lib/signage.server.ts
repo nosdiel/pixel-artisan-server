@@ -104,7 +104,6 @@ async function refreshCanvasMediaUrls(canvasJson: unknown) {
     _objects?: FabricNode[];
     clipPath?: FabricNode;
     backgroundImage?: FabricNode;
-    [key: string]: unknown;
   };
   const json = JSON.parse(JSON.stringify(canvasJson)) as FabricNode;
   let refreshedImages = 0;
