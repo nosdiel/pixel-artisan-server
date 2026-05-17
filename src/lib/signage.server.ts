@@ -49,7 +49,10 @@ async function assertRendererSupportsUpload(rendererUrl: string, rendererAuthTok
   }
 }
 
-async function warnIfRendererHealthCheckFails(rendererUrl: string, rendererAuthToken: string | null) {
+async function warnIfRendererHealthCheckFails(
+  rendererUrl: string,
+  rendererAuthToken: string | null,
+) {
   try {
     await assertRendererSupportsUpload(rendererUrl, rendererAuthToken);
   } catch (e) {
