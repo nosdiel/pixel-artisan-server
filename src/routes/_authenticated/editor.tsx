@@ -15,6 +15,8 @@ import { autoCompress } from "@/lib/compress";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEditorDialog";
+import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
+import { formatPrice } from "@/lib/square-binding";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
