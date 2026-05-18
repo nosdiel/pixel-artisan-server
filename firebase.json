@@ -1,0 +1,10 @@
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "compressor",
+      "runtime": "nodejs20",
+      "ignore": ["node_modules", ".git", "*.log"]
+    }
+  ]
+}
