@@ -561,11 +561,15 @@ function TemplatesPage() {
       const mimeOut: "video/mp4" | "video/webm" = recorderMime.startsWith("video/mp4")
         ? "video/mp4"
         : "video/webm";
-      const verified = await verifyRecordedVideoBlob(blob, maxDur);
+      const uploadBlob =
+        mimeOut === "video/webm"
+          ? await fixWebmDuration(blob, Math.round(maxDur * 1000), { logger: false })
+          : blob;
+      const verified = await verifyRecordedVideoBlob(uploadBlob, maxDur);
       toast.success(
-        `Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(blob.size / 1024)} KB)`,
+        `Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(uploadBlob.size / 1024)} KB)`,
       );
-      const base64 = await blobToBase64(blob);
+      const base64 = await blobToBase64(uploadBlob);
       return await uploadRenderedVideo({
         data: {
           templateId,
