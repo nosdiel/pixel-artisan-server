@@ -1,0 +1,2 @@
+ALTER TABLE public.square_connections DROP CONSTRAINT IF EXISTS square_connections_source_check;
+ALTER TABLE public.square_connections ADD CONSTRAINT square_connections_source_check CHECK (source = ANY (ARRAY['api'::text, 'online_site'::text, 'toast_api'::text]));
