@@ -727,17 +727,31 @@ function EditorPage() {
       e.target.value = "";
       return;
     }
+    setPendingVideoFile(file);
+    e.target.value = "";
+  };
+  const handleEditedVideoSave = async (result: EditedVideoResult) => {
     const { data: ud } = await supabase.auth.getUser();
-    if (!ud.user) { e.target.value = ""; return; }
-    const ext = file.name.split(".").pop()?.toLowerCase() || "mp4";
-    const path = `${ud.user.id}/editor-assets/${nanoid(10)}.${ext}`;
+    if (!ud.user) { setPendingVideoFile(null); return; }
+    const videoExt = result.videoMime === "video/mp4" ? "mp4" : "webm";
+    const baseId = nanoid(10);
+    const path = `${ud.user.id}/editor-assets/${baseId}.${videoExt}`;
+    const thumbPath = `${ud.user.id}/editor-assets/thumbnails/${baseId}.jpg`;
     const tId = toast.loading("Uploading video…");
-    const { error } = await supabase.storage.from("images").upload(path, file, { contentType: file.type || "video/mp4", upsert: true });
-    if (error) { toast.error(error.message, { id: tId }); e.target.value = ""; return; }
+    const { error } = await supabase.storage.from("images").upload(path, result.videoBlob, {
+      contentType: result.videoMime,
+      upsert: true,
+    });
+    if (error) { toast.error(error.message, { id: tId }); setPendingVideoFile(null); return; }
+    const { error: thumbErr } = await supabase.storage.from("images").upload(thumbPath, result.thumbnailBlob, {
+      contentType: "image/jpeg",
+      upsert: true,
+    });
+    if (thumbErr) console.warn("[video upload] thumbnail upload failed:", thumbErr.message);
     const { data: signed, error: signErr } = await supabase.storage.from("images").createSignedUrl(path, 3600);
     if (signErr || !signed?.signedUrl) {
       toast.error(signErr?.message ?? "Could not get video URL", { id: tId });
-      e.target.value = "";
+      setPendingVideoFile(null);
       return;
     }
     toast.dismiss(tId);
@@ -747,7 +761,7 @@ function EditorPage() {
       console.error("[video upload] failed to place on canvas:", err);
       toast.error(err instanceof Error ? err.message : "Could not place video");
     }
-    e.target.value = "";
+    setPendingVideoFile(null);
   };
   const addText = () => {
     const fc = fcRef.current; if (!fc || !fabric) return;
