@@ -669,18 +669,21 @@ function EditorPage() {
   };
   const onUploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
-    const { data: ud } = await supabase.auth.getUser();
-    if (!ud.user) return;
-    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
-    const path = `${ud.user.id}/editor-assets/${nanoid(10)}.${ext}`;
-    const { error } = await supabase.storage.from("images").upload(path, file, { contentType: file.type, upsert: true });
-    if (error) {
-      toast.error(error.message);
-      return;
+    const tId = toast.loading("Uploading image…");
+    try {
+      const res = await uploadEditedMediaToFirebase({
+        kind: "image",
+        blob: file,
+        contentType: file.type || "image/png",
+        name: file.name,
+      });
+      toast.dismiss(tId);
+      await addImageFromUrl(res.url, res.path);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Image upload failed", { id: tId });
+    } finally {
+      e.target.value = "";
     }
-    const { data: signed } = await supabase.storage.from("images").createSignedUrl(path, 3600);
-    await addImageFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
-    e.target.value = "";
   };
 
   const videoRafRef = useRef<Set<number>>(new Set());
