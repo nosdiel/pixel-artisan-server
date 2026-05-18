@@ -239,7 +239,9 @@ async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: nu
 
   try {
     video.currentTime = 0;
-  } catch {}
+  } catch {
+    // Some browsers reject seeking generated preview blobs before playback starts.
+  }
   return resolved;
 }
 
@@ -295,7 +297,9 @@ async function verifyRecordedVideoBlob(blob: Blob, expectedSeconds: number) {
   } finally {
     try {
       preview.pause();
-    } catch {}
+    } catch {
+      // Best effort cleanup after preview verification.
+    }
     preview.remove();
     window.setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000);
   }
