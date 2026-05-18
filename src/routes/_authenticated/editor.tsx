@@ -16,6 +16,7 @@ import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEditorDialog";
 import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
+import { uploadEditedMediaToFirebase } from "@/integrations/firebase/media";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
