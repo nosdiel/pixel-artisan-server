@@ -230,7 +230,14 @@ export async function recomputeStaleTemplates(userId: string) {
     } else if (priceChanged && !t.is_stale) {
       // Template-level binding price changed but no auto-updatable text layers — flag for manual review
       staleCount++;
-      await supabaseAdmin.from("templates").update({ is_stale: true }).eq("id", t.id);
+      // Refresh the snapshot to current prices so the next sync won't re-flag
+      // this template until prices actually change again.
+      const nextSnapshot: Record<string, number | null> = { ...snapshot };
+      for (const b of bindings) nextSnapshot[b.square_item_id] = priceMap[b.square_item_id] ?? null;
+      await supabaseAdmin
+        .from("templates")
+        .update({ is_stale: true, last_price_snapshot: nextSnapshot })
+        .eq("id", t.id);
       changedTemplateIds.push(t.id);
     }
   }
