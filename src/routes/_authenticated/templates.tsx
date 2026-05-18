@@ -80,7 +80,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 const VIDEO_RECORDING_FPS = 30;
 const VIDEO_RECORDING_MIN_SECONDS = 10;
 const VIDEO_RECORDING_MAX_SECONDS = 30;
-const VIDEO_RECORDING_BITRATE = 5_000_000;
+const VIDEO_RECORDING_BITRATE = 3_000_000;
 
 type VideoLayer = {
   video: HTMLVideoElement;
@@ -330,6 +330,14 @@ function TemplatesPage() {
     const canvasEl = document.createElement("canvas");
     canvasEl.width = prep.width;
     canvasEl.height = prep.height;
+    canvasEl.style.position = "fixed";
+    canvasEl.style.left = "-9999px";
+    canvasEl.style.top = "0";
+    canvasEl.style.width = "1px";
+    canvasEl.style.height = "1px";
+    canvasEl.style.opacity = "0";
+    canvasEl.style.pointerEvents = "none";
+    document.body.appendChild(canvasEl);
     const staticCanvas = new fabric.StaticCanvas(canvasEl, {
       width: prep.width,
       height: prep.height,
@@ -418,6 +426,14 @@ function TemplatesPage() {
             v.loop = true;
             v.preload = "auto";
             v.src = videoSrc;
+            v.style.position = "fixed";
+            v.style.left = "-9999px";
+            v.style.top = "0";
+            v.style.width = "1px";
+            v.style.height = "1px";
+            v.style.opacity = "0";
+            v.style.pointerEvents = "none";
+            document.body.appendChild(v);
             await waitForVideoCanPlay(v, videoSrc);
             (fabricObj as any).setElement(v);
             (fabricObj as any).objectCaching = false;
@@ -436,8 +452,10 @@ function TemplatesPage() {
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
 
       const durations = await Promise.all(videos.map((v) => resolveVideoDuration(v, VIDEO_RECORDING_MIN_SECONDS)));
-      const longest = Math.max(...durations, VIDEO_RECORDING_MIN_SECONDS);
-      const maxDur = Math.min(VIDEO_RECORDING_MAX_SECONDS, Math.max(VIDEO_RECORDING_MIN_SECONDS, longest));
+      const hasPlayableDuration = durations.some((duration) => Number.isFinite(duration) && duration > 0);
+      const maxDur = hasPlayableDuration
+        ? Math.min(VIDEO_RECORDING_MAX_SECONDS, Math.max(VIDEO_RECORDING_MIN_SECONDS, VIDEO_RECORDING_MIN_SECONDS))
+        : VIDEO_RECORDING_MIN_SECONDS;
 
       const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
       const canvasTrack = stream.getVideoTracks()[0] as MediaStreamTrack & { requestFrame?: () => void };
@@ -489,7 +507,12 @@ function TemplatesPage() {
       renderFrame();
       recorder.start(250);
       window.setTimeout(() => {
-        try { recorder?.state === "recording" && recorder.stop(); } catch {}
+        try {
+          if (recorder?.state === "recording") {
+            recorder.requestData();
+            recorder.stop();
+          }
+        } catch {}
       }, Math.ceil(maxDur * 1000));
 
       const blob = await recordingDone;
@@ -512,8 +535,9 @@ function TemplatesPage() {
     } finally {
       if (rafId != null) cancelAnimationFrame(rafId);
       try { recorder?.state === "recording" && recorder.stop(); } catch {}
-      videos.forEach((v) => { try { v.pause(); v.src = ""; v.load(); } catch {} });
+      videos.forEach((v) => { try { v.pause(); v.src = ""; v.load(); v.remove(); } catch {} });
       staticCanvas.dispose();
+      canvasEl.remove();
     }
   }
 
