@@ -412,6 +412,27 @@ function EditorPage() {
     })();
   }, []);
 
+  // Layer Firebase-sourced Square catalog on top of the Supabase cache.
+  // When Firebase items load, they replace the cache entries. Editor stays
+  // usable when Firebase is unconfigured or offline (hook returns []).
+  const { items: firebaseItems, error: firebaseCatalogError } = useSquareCatalog();
+  const { state: squareSyncState } = useSquareSyncState();
+  const { trigger: triggerSquareSync, running: squareSyncRunning } = useTriggerSquareSync();
+  useEffect(() => {
+    if (!firebaseItems || firebaseItems.length === 0) return;
+    const mapped: SquareCacheItem[] = firebaseItems.map((it) => {
+      const primary = it.variations?.[0];
+      return {
+        square_item_id: it.squareItemId,
+        name: it.name || null,
+        description: it.description ?? null,
+        price_cents: primary?.priceCents ?? null,
+        currency: primary?.currency ?? null,
+      };
+    });
+    setSquareItems(mapped);
+  }, [firebaseItems]);
+
   const refreshBoundTexts = useCallback((items: SquareCacheItem[]) => {
     const fc = fcRef.current;
     if (!fc || !fabric || items.length === 0) return 0;
