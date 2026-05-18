@@ -518,9 +518,15 @@ function EditorPage() {
     const fc = fcRef.current;
     if (!fc) return;
     const { w, h } = getCanvasSize(preset);
-    fc.setZoom(zoom);
+    // Order matters: set the backstore (natural) size first so it matches the
+    // canvas's aspect ratio, then the CSS size scaled by zoom, then the
+    // viewport zoom. Doing setZoom first then resizing the backstore can
+    // leave the upper/lower canvas elements with mismatched style dimensions
+    // (the symptom: the image looks stretched horizontally or vertically
+    // when zooming in/out).
     fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
     fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
+    fc.setZoom(zoom);
     fc.requestRenderAll();
   }, [zoom, preset]);
 
@@ -805,7 +811,10 @@ function EditorPage() {
       const { w: cw, h: ch } = getCanvasSize(preset);
       const iw = target.width!;
       const ih = target.height!;
-      const scale = Math.min(cw / iw, ch / ih);
+      // FILL the canvas (cover) — use the larger ratio so the image covers
+      // the entire canvas, then center-crop any overflow. Previously this
+      // used Math.min (contain) which left letterbox bars.
+      const scale = Math.max(cw / iw, ch / ih);
       target.set({ scaleX: scale, scaleY: scale });
       target.set({
         left: (cw - iw * scale) / 2,
