@@ -934,6 +934,12 @@ function EditorPage() {
 
   return (
     <div className="flex h-screen bg-muted/30">
+      <VideoEditorDialog
+        file={pendingVideoFile}
+        open={!!pendingVideoFile}
+        onCancel={() => setPendingVideoFile(null)}
+        onSave={handleEditedVideoSave}
+      />
       {/* LEFT PANEL */}
       <div className="w-72 border-r border-border bg-card flex flex-col">
         <div className="p-3 border-b border-border">
