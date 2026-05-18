@@ -46,6 +46,13 @@ function getCanvasSize(presetKey: string) {
   return PRESETS[presetKey] ?? PRESETS["1920x1080"];
 }
 
+function applyCanvasDisplayZoom(canvas: Fabric.Canvas, width: number, height: number, displayZoom: number) {
+  canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+  canvas.setDimensions({ width, height }, { backstoreOnly: true });
+  canvas.setDimensions({ width: width * displayZoom, height: height * displayZoom }, { cssOnly: true });
+  canvas.requestRenderAll();
+}
+
 function formatSquareValue(item: SquareCacheItem | undefined, field: SquareField): string {
   if (!item) return "";
   if (field === "name") return item.name ?? "";
@@ -259,9 +266,7 @@ function EditorPage() {
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
     const fittedZoom = getFitZoom(preset);
-    fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
-    fc.setZoom(fittedZoom);
-    fc.setDimensions({ width: w * fittedZoom, height: h * fittedZoom }, { cssOnly: true });
+    applyCanvasDisplayZoom(fc, w, h, fittedZoom);
     setZoom(fittedZoom);
 
     const onSel = () => { setActive(fc.getActiveObject() ?? null); refresh(); };
@@ -518,16 +523,7 @@ function EditorPage() {
     const fc = fcRef.current;
     if (!fc) return;
     const { w, h } = getCanvasSize(preset);
-    // Order matters: set the backstore (natural) size first so it matches the
-    // canvas's aspect ratio, then the CSS size scaled by zoom, then the
-    // viewport zoom. Doing setZoom first then resizing the backstore can
-    // leave the upper/lower canvas elements with mismatched style dimensions
-    // (the symptom: the image looks stretched horizontally or vertically
-    // when zooming in/out).
-    fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
-    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
-    fc.setZoom(zoom);
-    fc.requestRenderAll();
+    applyCanvasDisplayZoom(fc, w, h, zoom);
   }, [zoom, preset]);
 
   // Apply bg color
