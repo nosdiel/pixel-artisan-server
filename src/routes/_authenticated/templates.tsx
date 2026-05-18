@@ -605,8 +605,9 @@ function TemplatesPage() {
           ? await fixWebmDuration(blob, Math.round(maxDur * 1000), { logger: false })
           : blob;
       const verified = await verifyRecordedVideoBlob(uploadBlob, maxDur);
+      const clampedDurationSeconds = Math.min(verified.durationSeconds, maxDur);
       toast.success(
-        `Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(uploadBlob.size / 1024)} KB)`,
+        `Local video preview verified (${clampedDurationSeconds.toFixed(1)}s, ${Math.round(uploadBlob.size / 1024)} KB)`,
       );
       const base64 = await blobToBase64(uploadBlob);
       return await uploadRenderedVideo({
@@ -616,7 +617,7 @@ function TemplatesPage() {
           mimeType: mimeOut,
           width: prep.width,
           height: prep.height,
-          durationMs: Math.round(verified.durationSeconds * 1000),
+          durationMs: Math.round(clampedDurationSeconds * 1000),
         },
       });
     } finally {
