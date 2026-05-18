@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import fixWebmDuration from "fix-webm-duration";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -181,7 +182,9 @@ function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5
 }
 
 async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: number) {
-  if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
+  if (Number.isFinite(video.duration) && video.duration >= fallbackSeconds * 0.75) {
+    return video.duration;
+  }
 
   const resolved = await new Promise<number>((resolve) => {
     let timeoutId: number | null = null;
@@ -193,7 +196,9 @@ async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: nu
     };
     const done = () => {
       const duration =
-        Number.isFinite(video.duration) && video.duration > 0 ? video.duration : fallbackSeconds;
+        Number.isFinite(video.duration) && video.duration >= fallbackSeconds * 0.75
+          ? video.duration
+          : fallbackSeconds;
       cleanup();
       resolve(duration);
     };
