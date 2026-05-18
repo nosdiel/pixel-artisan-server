@@ -910,7 +910,7 @@ function EditorPage() {
         : await supabase.from("images").insert(imagePayload);
       if (insErr) throw insErr;
       toast.success(`Saved! Compressed ${Math.round((1 - best.size / originalSize) * 100)}%`);
-      navigate({ to: "/dashboard" });
+      
     } catch (e: any) {
       toast.error(e.message || "Save failed");
     } finally { setSaving(false); }
