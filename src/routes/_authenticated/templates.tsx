@@ -80,7 +80,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 const VIDEO_RECORDING_FPS = 30;
 const VIDEO_RECORDING_MIN_SECONDS = 10;
 const VIDEO_RECORDING_MAX_SECONDS = 30;
-const VIDEO_RECORDING_BITRATE = 5_000_000;
+const VIDEO_RECORDING_BITRATE = 3_000_000;
 
 type VideoLayer = {
   video: HTMLVideoElement;
@@ -95,8 +95,8 @@ function pickRecorderMimeType() {
     "video/mp4;codecs=avc1",
     "video/mp4",
   ];
-  return candidates.find((m) =>
-    typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
+  return candidates.find(
+    (m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
   );
 }
 
@@ -161,7 +161,9 @@ function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5
       finish(error);
     };
 
-    const requestVideoFrameCallback = (target as any).requestVideoFrameCallback as ((cb: () => void) => number) | undefined;
+    const requestVideoFrameCallback = (target as any).requestVideoFrameCallback as
+      | ((cb: () => void) => number)
+      | undefined;
     if (typeof requestVideoFrameCallback === "function") {
       requestVideoFrameCallback.call(target, () => cleanupFinish());
       return;
@@ -170,7 +172,8 @@ function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5
     const startedAt = performance.now();
     const check = () => {
       if (target.readyState >= 2 && target.currentTime > 0) cleanupFinish();
-      else if (performance.now() - startedAt > timeoutMs) cleanupFinish(new Error(`Timed out waiting for video frame: ${label}`));
+      else if (performance.now() - startedAt > timeoutMs)
+        cleanupFinish(new Error(`Timed out waiting for video frame: ${label}`));
       else requestAnimationFrame(check);
     };
     requestAnimationFrame(check);
@@ -189,9 +192,8 @@ async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: nu
       video.removeEventListener("error", done);
     };
     const done = () => {
-      const duration = Number.isFinite(video.duration) && video.duration > 0
-        ? video.duration
-        : fallbackSeconds;
+      const duration =
+        Number.isFinite(video.duration) && video.duration > 0 ? video.duration : fallbackSeconds;
       cleanup();
       resolve(duration);
     };
@@ -199,10 +201,16 @@ async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: nu
     video.addEventListener("seeked", done);
     video.addEventListener("error", done);
     timeoutId = window.setTimeout(done, 2_000);
-    try { video.currentTime = 1e9; } catch { done(); }
+    try {
+      video.currentTime = 1e9;
+    } catch {
+      done();
+    }
   });
 
-  try { video.currentTime = 0; } catch {}
+  try {
+    video.currentTime = 0;
+  } catch {}
   return resolved;
 }
 
@@ -247,7 +255,8 @@ async function verifyRecordedVideoBlob(blob: Blob, expectedSeconds: number) {
       const targetTime = Math.min(1, durationSeconds / 4);
       const check = () => {
         if (!preview.paused && preview.currentTime >= targetTime) resolve();
-        else if (performance.now() - startedAt > 5_000) reject(new Error("Recorded preview did not play locally. Refusing to upload."));
+        else if (performance.now() - startedAt > 5_000)
+          reject(new Error("Recorded preview did not play locally. Refusing to upload."));
         else requestAnimationFrame(check);
       };
       requestAnimationFrame(check);
@@ -255,7 +264,9 @@ async function verifyRecordedVideoBlob(blob: Blob, expectedSeconds: number) {
 
     return { durationSeconds, previewUrl };
   } finally {
-    try { preview.pause(); } catch {}
+    try {
+      preview.pause();
+    } catch {}
     preview.remove();
     window.setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000);
   }
@@ -330,12 +341,19 @@ function TemplatesPage() {
     const canvasEl = document.createElement("canvas");
     canvasEl.width = prep.width;
     canvasEl.height = prep.height;
+    canvasEl.style.position = "fixed";
+    canvasEl.style.left = "-9999px";
+    canvasEl.style.top = "0";
+    canvasEl.style.width = "1px";
+    canvasEl.style.height = "1px";
+    canvasEl.style.opacity = "0";
+    canvasEl.style.pointerEvents = "none";
+    document.body.appendChild(canvasEl);
     const staticCanvas = new fabric.StaticCanvas(canvasEl, {
       width: prep.width,
       height: prep.height,
       enableRetinaScaling: false,
-      backgroundColor:
-        (prep.canvasJson as { background?: string }).background ?? "#ffffff",
+      backgroundColor: (prep.canvasJson as { background?: string }).background ?? "#ffffff",
       renderOnAddRemove: false,
     });
 
@@ -387,8 +405,7 @@ function TemplatesPage() {
       width: prep.width,
       height: prep.height,
       enableRetinaScaling: false,
-      backgroundColor:
-        (prep.canvasJson as { background?: string }).background ?? "#ffffff",
+      backgroundColor: (prep.canvasJson as { background?: string }).background ?? "#ffffff",
       renderOnAddRemove: false,
     });
 
@@ -408,7 +425,8 @@ function TemplatesPage() {
         for (let i = 0; i < jsonList.length; i++) {
           const j = jsonList[i];
           const fabricObj = fabricList[i];
-          const videoSrc: string | undefined = j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
+          const videoSrc: string | undefined =
+            j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
 
           if (videoSrc && fabricObj instanceof fabric.FabricImage) {
             const v = document.createElement("video");
@@ -418,6 +436,14 @@ function TemplatesPage() {
             v.loop = true;
             v.preload = "auto";
             v.src = videoSrc;
+            v.style.position = "fixed";
+            v.style.left = "-9999px";
+            v.style.top = "0";
+            v.style.width = "1px";
+            v.style.height = "1px";
+            v.style.opacity = "0";
+            v.style.pointerEvents = "none";
+            document.body.appendChild(v);
             await waitForVideoCanPlay(v, videoSrc);
             (fabricObj as any).setElement(v);
             (fabricObj as any).objectCaching = false;
@@ -426,7 +452,8 @@ function TemplatesPage() {
           }
 
           const childJson = (j?.objects ?? j?._objects ?? []) as any[];
-          const childFabric = typeof fabricObj?.getObjects === "function" ? fabricObj.getObjects() : [];
+          const childFabric =
+            typeof fabricObj?.getObjects === "function" ? fabricObj.getObjects() : [];
           if (childJson.length && childFabric.length) await attachVideos(childJson, childFabric);
         }
       };
@@ -435,15 +462,25 @@ function TemplatesPage() {
 
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
 
-      const durations = await Promise.all(videos.map((v) => resolveVideoDuration(v, VIDEO_RECORDING_MIN_SECONDS)));
-      const longest = Math.max(...durations, VIDEO_RECORDING_MIN_SECONDS);
-      const maxDur = Math.min(VIDEO_RECORDING_MAX_SECONDS, Math.max(VIDEO_RECORDING_MIN_SECONDS, longest));
+      const durations = await Promise.all(
+        videos.map((v) => resolveVideoDuration(v, VIDEO_RECORDING_MIN_SECONDS)),
+      );
+      const hasPlayableDuration = durations.some(
+        (duration) => Number.isFinite(duration) && duration > 0,
+      );
+      const maxDur = hasPlayableDuration
+        ? Math.min(
+            VIDEO_RECORDING_MAX_SECONDS,
+            Math.max(VIDEO_RECORDING_MIN_SECONDS, VIDEO_RECORDING_MIN_SECONDS),
+          )
+        : VIDEO_RECORDING_MIN_SECONDS;
 
       const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
-      const canvasTrack = stream.getVideoTracks()[0] as MediaStreamTrack & { requestFrame?: () => void };
-      const requestCanvasFrame = typeof canvasTrack?.requestFrame === "function"
-        ? () => canvasTrack.requestFrame?.()
-        : null;
+      const canvasTrack = stream.getVideoTracks()[0] as MediaStreamTrack & {
+        requestFrame?: () => void;
+      };
+      const requestCanvasFrame =
+        typeof canvasTrack?.requestFrame === "function" ? () => canvasTrack.requestFrame?.() : null;
 
       // RAF loop: keep re-rendering so videos animate, and explicitly push
       // canvas frames when the browser exposes CanvasCaptureMediaStreamTrack.
@@ -464,9 +501,14 @@ function TemplatesPage() {
       const recorderMime = pickRecorderMimeType();
       if (!recorderMime) throw new Error("Browser does not support MediaRecorder for video output");
 
-      recorder = new MediaRecorder(stream, { mimeType: recorderMime, videoBitsPerSecond: VIDEO_RECORDING_BITRATE });
+      recorder = new MediaRecorder(stream, {
+        mimeType: recorderMime,
+        videoBitsPerSecond: VIDEO_RECORDING_BITRATE,
+      });
       const chunks: Blob[] = [];
-      recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size) chunks.push(e.data);
+      };
 
       const recordingDone = new Promise<Blob>((resolve, reject) => {
         recorder!.onstop = () => {
@@ -474,13 +516,21 @@ function TemplatesPage() {
           if (chunks.length === 0) reject(new Error("MediaRecorder produced no video chunks"));
           else resolve(new Blob(chunks, { type: outMime }));
         };
-        recorder!.onerror = (e) => reject(new Error(`MediaRecorder error: ${String((e as any).error?.message || e)}`));
+        recorder!.onerror = (e) =>
+          reject(new Error(`MediaRecorder error: ${String((e as any).error?.message || e)}`));
       });
 
       // Start playback FIRST so the stream has frames, then start recording.
       // Loop videos so even a 1s clip records the full window without ending
       // the stream prematurely. We stop strictly via wall-clock timer.
-      videos.forEach((v) => { v.loop = true; try { v.currentTime = 0; } catch {} });
+      videos.forEach((v) => {
+        v.loop = true;
+        try {
+          v.currentTime = 0;
+        } catch {
+          // Ignore browsers that delay seeking until more data is buffered.
+        }
+      });
       await Promise.all(videos.map((v) => waitForVideoCanPlay(v, v.currentSrc || v.src)));
       await Promise.all(videos.map((v) => v.play()));
       await Promise.all(videos.map((v) => waitForVideoFrame(v, v.currentSrc || v.src)));
@@ -488,16 +538,28 @@ function TemplatesPage() {
       await waitForAnimationFrames(3);
       renderFrame();
       recorder.start(250);
-      window.setTimeout(() => {
-        try { recorder?.state === "recording" && recorder.stop(); } catch {}
-      }, Math.ceil(maxDur * 1000));
+      window.setTimeout(
+        () => {
+          try {
+            if (recorder?.state === "recording") {
+              recorder.requestData();
+              recorder.stop();
+            }
+          } catch {
+            // Ignore recorder cleanup races.
+          }
+        },
+        Math.ceil(maxDur * 1000),
+      );
 
       const blob = await recordingDone;
       const mimeOut: "video/mp4" | "video/webm" = recorderMime.startsWith("video/mp4")
         ? "video/mp4"
         : "video/webm";
       const verified = await verifyRecordedVideoBlob(blob, maxDur);
-      toast.success(`Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(blob.size / 1024)} KB)`);
+      toast.success(
+        `Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(blob.size / 1024)} KB)`,
+      );
       const base64 = await blobToBase64(blob);
       return await uploadRenderedVideo({
         data: {
@@ -511,15 +573,27 @@ function TemplatesPage() {
       });
     } finally {
       if (rafId != null) cancelAnimationFrame(rafId);
-      try { recorder?.state === "recording" && recorder.stop(); } catch {}
-      videos.forEach((v) => { try { v.pause(); v.src = ""; v.load(); } catch {} });
+      try {
+        if (recorder?.state === "recording") recorder.stop();
+      } catch {
+        // Ignore cleanup races after MediaRecorder has already stopped.
+      }
+      videos.forEach((v) => {
+        try {
+          v.pause();
+          v.src = "";
+          v.load();
+          v.remove();
+        } catch {
+          // Best-effort cleanup for detached media elements.
+        }
+      });
       staticCanvas.dispose();
+      canvasEl.remove();
     }
   }
 
-  const publishById = new Map(
-    (publishStatusQ.data?.rows ?? []).map((r) => [r.id, r] as const),
-  );
+  const publishById = new Map((publishStatusQ.data?.rows ?? []).map((r) => [r.id, r] as const));
 
   const [running, setRunning] = useState(false);
   const [processed, setProcessed] = useState(0);
@@ -630,7 +704,9 @@ function TemplatesPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">Templates &amp; Square sync</h1>
-          <p className="text-muted-foreground mt-1">Bind Square catalog items to templates. We flag templates as stale when prices change.</p>
+          <p className="text-muted-foreground mt-1">
+            Bind Square catalog items to templates. We flag templates as stale when prices change.
+          </p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="flex gap-2">
@@ -639,7 +715,12 @@ function TemplatesPage() {
               {running ? "Syncing…" : "Sync Square catalog"}
             </Button>
             {running && (
-              <Button variant="outline" onClick={() => { cancelRef.current = true; }}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  cancelRef.current = true;
+                }}
+              >
                 Stop
               </Button>
             )}
@@ -662,7 +743,9 @@ function TemplatesPage() {
           <div className="h-2 w-full rounded-full bg-primary/15 overflow-hidden">
             <div className="h-full w-1/3 bg-primary animate-[indeterminate_1.4s_ease-in-out_infinite]" />
           </div>
-          <p className="text-xs text-muted-foreground mt-2">You can navigate away — the sync will resume if you return before it finishes.</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            You can navigate away — the sync will resume if you return before it finishes.
+          </p>
         </div>
       )}
 
@@ -671,11 +754,14 @@ function TemplatesPage() {
         {tplQ.isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : !tplQ.data?.templates.length ? (
-          <p className="text-sm text-muted-foreground">No templates yet. Create one from the Editor.</p>
+          <p className="text-sm text-muted-foreground">
+            No templates yet. Create one from the Editor.
+          </p>
         ) : (
           <ul className="divide-y divide-border">
             {tplQ.data.templates.map((t) => {
-              const bindings = (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
+              const bindings =
+                (t.square_bindings as Array<{ square_item_id: string }> | null) ?? [];
               return (
                 <li key={t.id} className="py-3 flex items-center justify-between gap-4">
                   <div className="min-w-0">
@@ -683,9 +769,15 @@ function TemplatesPage() {
                       <span className="font-medium truncate">{t.name}</span>
                       <Badge variant="secondary">{t.preset}</Badge>
                       {t.is_stale ? (
-                        <Badge variant="destructive" className="gap-1"><AlertCircle className="h-3 w-3" />Stale</Badge>
+                        <Badge variant="destructive" className="gap-1">
+                          <AlertCircle className="h-3 w-3" />
+                          Stale
+                        </Badge>
                       ) : (
-                        <Badge className="gap-1 bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/15"><CheckCircle2 className="h-3 w-3" />Fresh</Badge>
+                        <Badge className="gap-1 bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/15">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Fresh
+                        </Badge>
                       )}
                       {(() => {
                         const ps = publishById.get(t.id);
@@ -693,13 +785,19 @@ function TemplatesPage() {
                         if (ps.last_publish_status === "success") {
                           return (
                             <Badge className="gap-1 bg-blue-500/15 text-blue-600 hover:bg-blue-500/15">
-                              <UploadCloud className="h-3 w-3" />Published
+                              <UploadCloud className="h-3 w-3" />
+                              Published
                             </Badge>
                           );
                         }
                         return (
-                          <Badge variant="destructive" className="gap-1" title={ps.last_publish_error ?? ""}>
-                            <AlertCircle className="h-3 w-3" />Publish failed
+                          <Badge
+                            variant="destructive"
+                            className="gap-1"
+                            title={ps.last_publish_error ?? ""}
+                          >
+                            <AlertCircle className="h-3 w-3" />
+                            Publish failed
                           </Badge>
                         );
                       })()}
@@ -730,13 +828,20 @@ function TemplatesPage() {
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" asChild>
-                      <Link to="/editor" search={{ template: t.id }}>Edit</Link>
+                      <Link to="/editor" search={{ template: t.id }}>
+                        Edit
+                      </Link>
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => openEdit(t)}>
                       Edit bindings
                     </Button>
                     {t.is_stale && (
-                      <Button size="sm" variant="outline" onClick={() => freshM.mutate(t.id)} disabled={freshM.isPending}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => freshM.mutate(t.id)}
+                        disabled={freshM.isPending}
+                      >
                         Mark fresh
                       </Button>
                     )}
@@ -748,7 +853,9 @@ function TemplatesPage() {
                       disabled={publishM.isPending}
                     >
                       <UploadCloud className="h-4 w-4" />
-                      {publishM.isPending && publishM.variables === t.id ? "Publishing…" : "Publish"}
+                      {publishM.isPending && publishM.variables === t.id
+                        ? "Publishing…"
+                        : "Publish"}
                     </Button>
                     <Button
                       size="sm"
@@ -776,19 +883,29 @@ function TemplatesPage() {
         {itemsQ.isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : !itemsQ.data?.items.length ? (
-          <p className="text-sm text-muted-foreground">No cached items. Connect Square in Settings, then click Sync.</p>
+          <p className="text-sm text-muted-foreground">
+            No cached items. Connect Square in Settings, then click Sync.
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-muted-foreground">
-                <tr><th className="py-2 pr-4">Item</th><th className="py-2 pr-4">Price</th><th className="py-2 pr-4">ID</th></tr>
+                <tr>
+                  <th className="py-2 pr-4">Item</th>
+                  <th className="py-2 pr-4">Price</th>
+                  <th className="py-2 pr-4">ID</th>
+                </tr>
               </thead>
               <tbody>
                 {itemsQ.data.items.map((it) => (
                   <tr key={it.square_item_id} className="border-t border-border">
                     <td className="py-2 pr-4">{it.name ?? "—"}</td>
-                    <td className="py-2 pr-4 tabular-nums">{formatPrice(it.price_cents, it.currency)}</td>
-                    <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">{it.square_item_id}</td>
+                    <td className="py-2 pr-4 tabular-nums">
+                      {formatPrice(it.price_cents, it.currency)}
+                    </td>
+                    <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
+                      {it.square_item_id}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -802,7 +919,9 @@ function TemplatesPage() {
           <DialogHeader>
             <DialogTitle>Bind Square items</DialogTitle>
             <DialogDescription>
-              {editing ? `Choose catalog items to bind to "${editing.name}". Templates go stale when a bound item's price changes.` : null}
+              {editing
+                ? `Choose catalog items to bind to "${editing.name}". Templates go stale when a bound item's price changes.`
+                : null}
             </DialogDescription>
           </DialogHeader>
           <Input
@@ -812,7 +931,9 @@ function TemplatesPage() {
           />
           <div className="max-h-[50vh] overflow-y-auto rounded-md border border-border">
             {!itemsQ.data?.items.length ? (
-              <p className="p-4 text-sm text-muted-foreground">No cached Square items. Run a sync first.</p>
+              <p className="p-4 text-sm text-muted-foreground">
+                No cached Square items. Run a sync first.
+              </p>
             ) : !filteredItems.length ? (
               <p className="p-4 text-sm text-muted-foreground">No matches.</p>
             ) : (
@@ -834,7 +955,9 @@ function TemplatesPage() {
                       />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm">{it.name ?? "—"}</p>
-                        <p className="font-mono text-xs text-muted-foreground truncate">{it.square_item_id}</p>
+                        <p className="font-mono text-xs text-muted-foreground truncate">
+                          {it.square_item_id}
+                        </p>
                       </div>
                       <span className="text-sm tabular-nums text-muted-foreground">
                         {formatPrice(it.price_cents, it.currency)}
@@ -848,9 +971,14 @@ function TemplatesPage() {
           <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
             <span className="text-xs text-muted-foreground">{selected.size} selected</span>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setEditing(null)} disabled={bindM.isPending}>Cancel</Button>
+              <Button variant="outline" onClick={() => setEditing(null)} disabled={bindM.isPending}>
+                Cancel
+              </Button>
               <Button
-                onClick={() => editing && bindM.mutate({ templateId: editing.id, squareItemIds: Array.from(selected) })}
+                onClick={() =>
+                  editing &&
+                  bindM.mutate({ templateId: editing.id, squareItemIds: Array.from(selected) })
+                }
                 disabled={bindM.isPending}
               >
                 {bindM.isPending ? "Saving…" : "Save bindings"}
