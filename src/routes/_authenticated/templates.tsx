@@ -104,7 +104,6 @@ function blobToBase64(blob: Blob): Promise<string> {
 
 const VIDEO_RECORDING_FPS = 30;
 const VIDEO_RECORDING_MIN_SECONDS = 10;
-const VIDEO_RECORDING_MAX_SECONDS = 30;
 const VIDEO_RECORDING_BITRATE = 3_000_000;
 
 type VideoLayer = {
@@ -114,11 +113,11 @@ type VideoLayer = {
 
 function pickRecorderMimeType() {
   const candidates = [
+    "video/mp4;codecs=avc1",
+    "video/mp4",
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
-    "video/mp4;codecs=avc1",
-    "video/mp4",
   ];
   return candidates.find(
     (m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
@@ -513,10 +512,7 @@ function TemplatesPage() {
       const longestSource = hasPlayableDuration
         ? Math.max(...durations.filter((d) => Number.isFinite(d) && d > 0))
         : VIDEO_RECORDING_MIN_SECONDS;
-      const maxDur = Math.min(
-        VIDEO_RECORDING_MAX_SECONDS,
-        Math.max(VIDEO_RECORDING_MIN_SECONDS, longestSource),
-      );
+      const maxDur = Math.max(VIDEO_RECORDING_MIN_SECONDS, longestSource);
 
       const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
       const canvasTrack = stream.getVideoTracks()[0] as MediaStreamTrack & {
