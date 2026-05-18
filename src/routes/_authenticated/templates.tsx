@@ -49,19 +49,43 @@ function isVideoSrc(src: unknown): src is string {
   return /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i.test(src);
 }
 
+type FabricCanvasObject = {
+  src?: unknown;
+  videoStoragePath?: unknown;
+  videoSrc?: unknown;
+  objects?: FabricCanvasObject[];
+  _objects?: FabricCanvasObject[];
+  clipPath?: FabricCanvasObject;
+  left?: unknown;
+  top?: unknown;
+  width?: unknown;
+  height?: unknown;
+  scaleX?: unknown;
+  scaleY?: unknown;
+  angle?: unknown;
+  opacity?: unknown;
+  originX?: unknown;
+  originY?: unknown;
+};
+
+type FabricCanvasJson = {
+  background?: string;
+  objects?: FabricCanvasObject[];
+};
+
 function canvasJsonHasVideo(canvasJson: unknown): boolean {
-  const visit = (obj: any): boolean => {
+  const visit = (obj: FabricCanvasObject | null | undefined): boolean => {
     if (!obj || typeof obj !== "object") return false;
     if (typeof obj.videoStoragePath === "string" && obj.videoStoragePath) return true;
     if (typeof obj.videoSrc === "string" && obj.videoSrc) return true;
     if (isVideoSrc(obj.src)) return true;
-    const children = (obj.objects ?? obj._objects ?? []) as any[];
+    const children = obj.objects ?? obj._objects ?? [];
     for (const c of children) if (visit(c)) return true;
     if (obj.clipPath && visit(obj.clipPath)) return true;
     return false;
   };
-  const root = canvasJson as any;
-  for (const o of (root?.objects ?? []) as any[]) if (visit(o)) return true;
+  const root = canvasJson as FabricCanvasJson | null;
+  for (const o of root?.objects ?? []) if (visit(o)) return true;
   return false;
 }
 
@@ -85,7 +109,7 @@ const VIDEO_RECORDING_BITRATE = 3_000_000;
 
 type VideoLayer = {
   video: HTMLVideoElement;
-  json: any;
+  json: FabricCanvasObject;
 };
 
 function pickRecorderMimeType() {
