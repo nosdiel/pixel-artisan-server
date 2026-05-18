@@ -527,7 +527,9 @@ function TemplatesPage() {
         v.loop = true;
         try {
           v.currentTime = 0;
-        } catch {}
+        } catch {
+          // Ignore browsers that delay seeking until more data is buffered.
+        }
       });
       await Promise.all(videos.map((v) => waitForVideoCanPlay(v, v.currentSrc || v.src)));
       await Promise.all(videos.map((v) => v.play()));
@@ -543,7 +545,9 @@ function TemplatesPage() {
               recorder.requestData();
               recorder.stop();
             }
-          } catch {}
+          } catch {
+            // Ignore recorder cleanup races.
+          }
         },
         Math.ceil(maxDur * 1000),
       );
@@ -570,15 +574,19 @@ function TemplatesPage() {
     } finally {
       if (rafId != null) cancelAnimationFrame(rafId);
       try {
-        recorder?.state === "recording" && recorder.stop();
-      } catch {}
+        if (recorder?.state === "recording") recorder.stop();
+      } catch {
+        // Ignore cleanup races after MediaRecorder has already stopped.
+      }
       videos.forEach((v) => {
         try {
           v.pause();
           v.src = "";
           v.load();
           v.remove();
-        } catch {}
+        } catch {
+          // Best-effort cleanup for detached media elements.
+        }
       });
       staticCanvas.dispose();
       canvasEl.remove();
