@@ -1,0 +1,380 @@
+/**
+ * Nini Signage media compressor (Cloud Functions for Firebase, gen2).
+ *
+ * Two entry points share one pipeline:
+ *   1. HTTPS endpoint:  POST  /processMedia
+ *        body: { path, mediaDocId?, contentType? }
+ *        -> compresses the file at `path` in the default bucket, replaces it
+ *           in place, generates a video thumbnail when applicable, then
+ *           updates media/{mediaDocId} in Firestore.
+ *   2. Storage trigger: onObjectFinalized (any upload to the bucket)
+ *        -> same pipeline, with `mediaDocId` resolved from object metadata
+ *           (preferred) or derived from the storage path.
+ *
+ * Firestore fields written to media/{mediaDocId}:
+ *   Images: url, path, type, size, width, height
+ *   Videos: url, path, type, size, width, height, length,
+ *           thumbnailURL, thumbnailPath
+ *
+ * Notes:
+ *   - The original Storage path is preserved (replace-in-place), so existing
+ *     `url` / `path` references in the signage app keep working.
+ *   - Thumbnails are written under  thumbnails/<basename>.jpg next to the
+ *     original (e.g. videos/foo.mp4 -> thumbnails/videos/foo.jpg).
+ *   - Re-entry protection: every file we (re)write gets metadata
+ *     `processed: "true"` so the Storage trigger ignores its own output.
+ */
+
+const path = require("path");
+const os = require("os");
+const fs = require("fs/promises");
+const { existsSync } = require("fs");
+const crypto = require("crypto");
+
+const admin = require("firebase-admin");
+const { onObjectFinalized } = require("firebase-functions/v2/storage");
+const { onRequest } = require("firebase-functions/v2/https");
+const { logger } = require("firebase-functions/v2");
+
+const sharp = require("sharp");
+const ffmpeg = require("fluent-ffmpeg");
+const ffmpegStatic = require("ffmpeg-static");
+const ffprobeStatic = require("ffprobe-static");
+
+ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfprobePath(ffprobeStatic.path);
+
+const BUCKET_NAME = "nini-signage-renderer.firebasestorage.app";
+const FIRESTORE_COLLECTION = "media";
+const SIGNED_URL_TTL_MS = 7 * 365 * 24 * 60 * 60 * 1000; // ~7 years
+
+admin.initializeApp({ storageBucket: BUCKET_NAME });
+
+const bucket = admin.storage().bucket(BUCKET_NAME);
+const firestore = admin.firestore();
+
+// ---------- helpers ----------
+
+function classify(contentType, filePath) {
+  const ct = (contentType || "").toLowerCase();
+  if (ct.startsWith("image/")) return "image";
+  if (ct.startsWith("video/")) return "video";
+  const ext = path.extname(filePath || "").toLowerCase();
+  if ([".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"].includes(ext)) return "image";
+  if ([".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"].includes(ext)) return "video";
+  return "other";
+}
+
+function tmpPath(suffix = "") {
+  return path.join(os.tmpdir(), `media-${crypto.randomBytes(8).toString("hex")}${suffix}`);
+}
+
+async function getSignedUrl(file) {
+  const [url] = await file.getSignedUrl({
+    action: "read",
+    expires: Date.now() + SIGNED_URL_TTL_MS,
+  });
+  return url;
+}
+
+function ffprobe(file) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(file, (err, data) => (err ? reject(err) : resolve(data)));
+  });
+}
+
+function resolveMediaDocId({ explicit, metadata, filePath }) {
+  if (explicit) return String(explicit);
+  const meta = metadata || {};
+  if (meta.mediaDocId) return String(meta.mediaDocId);
+  if (meta.mediaId) return String(meta.mediaId);
+  if (meta.docId) return String(meta.docId);
+  // Fallback: derive from filename (last segment without extension).
+  const base = path.basename(filePath || "", path.extname(filePath || ""));
+  return base || null;
+}
+
+// ---------- image pipeline ----------
+
+async function processImage({ file, contentType }) {
+  const localIn = tmpPath(path.extname(file.name) || ".bin");
+  await file.download({ destination: localIn });
+
+  // Re-encode to a sensible default. Keep PNG transparent images as PNG,
+  // everything else becomes high-quality JPEG (we keep the original Storage
+  // path/extension, so contentType stays whatever the original was — sharp
+  // just produces smaller bytes of the same visual format when possible).
+  const ext = path.extname(file.name).toLowerCase();
+  const isPng = ext === ".png" || contentType === "image/png";
+  const isWebp = ext === ".webp" || contentType === "image/webp";
+
+  let pipeline = sharp(localIn, { failOn: "none" }).rotate(); // honor EXIF orientation
+  const meta = await pipeline.metadata();
+  // Cap very large images.
+  if (meta.width && meta.width > 4096) {
+    pipeline = pipeline.resize({ width: 4096, withoutEnlargement: true });
+  }
+  if (isPng) pipeline = pipeline.png({ compressionLevel: 9, palette: true });
+  else if (isWebp) pipeline = pipeline.webp({ quality: 82 });
+  else pipeline = pipeline.jpeg({ quality: 85, mozjpeg: true });
+
+  const localOut = tmpPath(ext || ".jpg");
+  const { width, height, size } = await pipeline.toFile(localOut);
+
+  await bucket.upload(localOut, {
+    destination: file.name,
+    contentType: contentType || `image/${(ext || ".jpg").slice(1)}`,
+    resumable: false,
+    metadata: {
+      cacheControl: "public, max-age=3600",
+      metadata: { processed: "true" },
+    },
+  });
+
+  const replaced = bucket.file(file.name);
+  const url = await getSignedUrl(replaced);
+
+  await fs.unlink(localIn).catch(() => {});
+  await fs.unlink(localOut).catch(() => {});
+
+  return {
+    kind: "image",
+    fields: {
+      url,
+      path: file.name,
+      type: contentType || `image/${(ext || ".jpg").slice(1)}`,
+      size,
+      width,
+      height,
+    },
+  };
+}
+
+// ---------- video pipeline ----------
+
+function compressVideo(localIn, localOut) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(localIn)
+      .videoCodec("libx264")
+      .audioCodec("aac")
+      .outputOptions([
+        "-preset veryfast",
+        "-crf 26",
+        "-movflags +faststart",
+        "-pix_fmt yuv420p",
+        "-vf scale='min(1920,iw)':-2",
+      ])
+      .on("end", () => resolve())
+      .on("error", reject)
+      .save(localOut);
+  });
+}
+
+function extractThumbnail(localIn, localOut) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(localIn)
+      .on("end", () => resolve())
+      .on("error", reject)
+      .screenshots({
+        timestamps: ["10%"],
+        filename: path.basename(localOut),
+        folder: path.dirname(localOut),
+        size: "640x?",
+      });
+  });
+}
+
+async function processVideo({ file, contentType }) {
+  const ext = (path.extname(file.name) || ".mp4").toLowerCase();
+  const localIn = tmpPath(ext);
+  await file.download({ destination: localIn });
+
+  // Compress (always produce mp4 bytes, but keep the original storage path
+  // and contentType so the app doesn't have to change references).
+  const localOut = tmpPath(".mp4");
+  await compressVideo(localIn, localOut);
+
+  // Probe the compressed output for accurate width/height/duration.
+  const probe = await ffprobe(localOut);
+  const vstream = (probe.streams || []).find((s) => s.codec_type === "video") || {};
+  const width = vstream.width || null;
+  const height = vstream.height || null;
+  const length = probe.format && probe.format.duration ? Number(probe.format.duration) : null; // seconds
+
+  // Thumbnail.
+  const thumbLocal = tmpPath(".jpg");
+  await extractThumbnail(localOut, thumbLocal);
+
+  // Upload compressed video (replace in place).
+  await bucket.upload(localOut, {
+    destination: file.name,
+    contentType: contentType || "video/mp4",
+    resumable: false,
+    metadata: {
+      cacheControl: "public, max-age=3600",
+      metadata: { processed: "true" },
+    },
+  });
+  const replaced = bucket.file(file.name);
+  const url = await getSignedUrl(replaced);
+  const [meta] = await replaced.getMetadata();
+  const size = Number(meta.size) || null;
+
+  // Upload thumbnail to thumbnails/<same-path>.jpg
+  const thumbStoragePath = `thumbnails/${file.name.replace(/\.[^./]+$/, "")}.jpg`;
+  await bucket.upload(thumbLocal, {
+    destination: thumbStoragePath,
+    contentType: "image/jpeg",
+    resumable: false,
+    metadata: {
+      cacheControl: "public, max-age=3600",
+      metadata: { processed: "true", thumbnailFor: file.name },
+    },
+  });
+  const thumbFile = bucket.file(thumbStoragePath);
+  const thumbnailURL = await getSignedUrl(thumbFile);
+
+  await fs.unlink(localIn).catch(() => {});
+  await fs.unlink(localOut).catch(() => {});
+  await fs.unlink(thumbLocal).catch(() => {});
+
+  return {
+    kind: "video",
+    fields: {
+      url,
+      path: file.name,
+      type: contentType || "video/mp4",
+      size,
+      width,
+      height,
+      length,
+      thumbnailURL,
+      thumbnailPath: thumbStoragePath,
+    },
+  };
+}
+
+// ---------- shared entry ----------
+
+async function processStoragePath({ storagePath, mediaDocId, contentTypeHint }) {
+  if (!storagePath) throw new Error("storagePath is required");
+  const file = bucket.file(storagePath);
+  const [exists] = await file.exists();
+  if (!exists) throw new Error(`File not found: ${storagePath}`);
+  const [meta] = await file.getMetadata();
+  const contentType = contentTypeHint || meta.contentType || "";
+  const kind = classify(contentType, storagePath);
+
+  // Skip thumbnails and anything we've already processed (loop guard).
+  if (storagePath.startsWith("thumbnails/")) {
+    return { skipped: "thumbnail-output", storagePath };
+  }
+  if (meta.metadata && meta.metadata.processed === "true") {
+    return { skipped: "already-processed", storagePath };
+  }
+
+  let result;
+  if (kind === "image") result = await processImage({ file, contentType });
+  else if (kind === "video") result = await processVideo({ file, contentType });
+  else return { skipped: `unsupported-content-type:${contentType}`, storagePath };
+
+  const docId = resolveMediaDocId({
+    explicit: mediaDocId,
+    metadata: meta.metadata,
+    filePath: storagePath,
+  });
+
+  if (docId) {
+    await firestore
+      .collection(FIRESTORE_COLLECTION)
+      .doc(docId)
+      .set(
+        {
+          ...result.fields,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+  } else {
+    logger.warn("processStoragePath: no mediaDocId resolved; skipping Firestore write", {
+      storagePath,
+    });
+  }
+
+  return { success: true, kind: result.kind, mediaDocId: docId, ...result.fields };
+}
+
+// ---------- HTTPS endpoint ----------
+
+exports.processMedia = onRequest(
+  {
+    region: "us-central1",
+    memory: "2GiB",
+    timeoutSeconds: 540,
+    cors: true,
+  },
+  async (req, res) => {
+    if (req.method === "OPTIONS") {
+      res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      return res.status(204).send("");
+    }
+    if (req.method !== "POST") return res.status(405).json({ error: "Use POST" });
+
+    try {
+      const body = req.body || {};
+      const out = await processStoragePath({
+        storagePath: body.path,
+        mediaDocId: body.mediaDocId,
+        contentTypeHint: body.contentType,
+      });
+      return res.status(200).json(out);
+    } catch (err) {
+      logger.error("processMedia failed", err);
+      return res.status(500).json({ error: String(err && err.message ? err.message : err) });
+    }
+  },
+);
+
+// ---------- Storage trigger ----------
+
+exports.onMediaUploaded = onObjectFinalized(
+  {
+    region: "us-central1",
+    bucket: BUCKET_NAME,
+    memory: "2GiB",
+    timeoutSeconds: 540,
+  },
+  async (event) => {
+    const obj = event.data;
+    const storagePath = obj.name;
+    const contentType = obj.contentType || "";
+    const customMeta = obj.metadata || {};
+
+    if (storagePath && storagePath.startsWith("thumbnails/")) {
+      logger.info("Skip thumbnail output", { storagePath });
+      return;
+    }
+    if (customMeta.processed === "true") {
+      logger.info("Skip already-processed object", { storagePath });
+      return;
+    }
+    if (classify(contentType, storagePath) === "other") {
+      logger.info("Skip non-media object", { storagePath, contentType });
+      return;
+    }
+
+    try {
+      const out = await processStoragePath({
+        storagePath,
+        mediaDocId: customMeta.mediaDocId || customMeta.mediaId || customMeta.docId,
+        contentTypeHint: contentType,
+      });
+      logger.info("Processed upload", out);
+    } catch (err) {
+      logger.error("onMediaUploaded failed", { storagePath, err: String(err) });
+      throw err;
+    }
+  },
+);
