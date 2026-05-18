@@ -186,9 +186,9 @@ function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5
       finish(error);
     };
 
-    const requestVideoFrameCallback = (target as any).requestVideoFrameCallback as
-      | ((cb: () => void) => number)
-      | undefined;
+    const requestVideoFrameCallback = (
+      target as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }
+    ).requestVideoFrameCallback;
     if (typeof requestVideoFrameCallback === "function") {
       requestVideoFrameCallback.call(target, () => cleanupFinish());
       return;
@@ -562,8 +562,10 @@ function TemplatesPage() {
           if (chunks.length === 0) reject(new Error("MediaRecorder produced no video chunks"));
           else resolve(new Blob(chunks, { type: outMime }));
         };
-        recorder!.onerror = (e) =>
-          reject(new Error(`MediaRecorder error: ${String((e as any).error?.message || e)}`));
+        recorder!.onerror = (e) => {
+          const errorEvent = e as Event & { error?: DOMException };
+          reject(new Error(`MediaRecorder error: ${errorEvent.error?.message || e.type}`));
+        };
       });
 
       // Start playback FIRST so the stream has frames, then start recording.
