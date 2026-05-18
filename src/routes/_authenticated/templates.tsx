@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import fixWebmDuration from "fix-webm-duration";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -48,19 +49,43 @@ function isVideoSrc(src: unknown): src is string {
   return /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i.test(src);
 }
 
+type FabricCanvasObject = {
+  src?: unknown;
+  videoStoragePath?: unknown;
+  videoSrc?: unknown;
+  objects?: FabricCanvasObject[];
+  _objects?: FabricCanvasObject[];
+  clipPath?: FabricCanvasObject;
+  left?: unknown;
+  top?: unknown;
+  width?: unknown;
+  height?: unknown;
+  scaleX?: unknown;
+  scaleY?: unknown;
+  angle?: unknown;
+  opacity?: unknown;
+  originX?: unknown;
+  originY?: unknown;
+};
+
+type FabricCanvasJson = {
+  background?: string;
+  objects?: FabricCanvasObject[];
+};
+
 function canvasJsonHasVideo(canvasJson: unknown): boolean {
-  const visit = (obj: any): boolean => {
+  const visit = (obj: FabricCanvasObject | null | undefined): boolean => {
     if (!obj || typeof obj !== "object") return false;
     if (typeof obj.videoStoragePath === "string" && obj.videoStoragePath) return true;
     if (typeof obj.videoSrc === "string" && obj.videoSrc) return true;
     if (isVideoSrc(obj.src)) return true;
-    const children = (obj.objects ?? obj._objects ?? []) as any[];
+    const children = obj.objects ?? obj._objects ?? [];
     for (const c of children) if (visit(c)) return true;
     if (obj.clipPath && visit(obj.clipPath)) return true;
     return false;
   };
-  const root = canvasJson as any;
-  for (const o of (root?.objects ?? []) as any[]) if (visit(o)) return true;
+  const root = canvasJson as FabricCanvasJson | null;
+  for (const o of root?.objects ?? []) if (visit(o)) return true;
   return false;
 }
 
@@ -84,7 +109,7 @@ const VIDEO_RECORDING_BITRATE = 3_000_000;
 
 type VideoLayer = {
   video: HTMLVideoElement;
-  json: any;
+  json: FabricCanvasObject;
 };
 
 function pickRecorderMimeType() {
@@ -161,9 +186,9 @@ function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5
       finish(error);
     };
 
-    const requestVideoFrameCallback = (target as any).requestVideoFrameCallback as
-      | ((cb: () => void) => number)
-      | undefined;
+    const requestVideoFrameCallback = (
+      target as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }
+    ).requestVideoFrameCallback;
     if (typeof requestVideoFrameCallback === "function") {
       requestVideoFrameCallback.call(target, () => cleanupFinish());
       return;
@@ -181,7 +206,9 @@ function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5
 }
 
 async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: number) {
-  if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
+  if (Number.isFinite(video.duration) && video.duration >= fallbackSeconds * 0.75) {
+    return video.duration;
+  }
 
   const resolved = await new Promise<number>((resolve) => {
     let timeoutId: number | null = null;
@@ -193,7 +220,9 @@ async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: nu
     };
     const done = () => {
       const duration =
-        Number.isFinite(video.duration) && video.duration > 0 ? video.duration : fallbackSeconds;
+        Number.isFinite(video.duration) && video.duration >= fallbackSeconds * 0.75
+          ? video.duration
+          : fallbackSeconds;
       cleanup();
       resolve(duration);
     };
@@ -210,7 +239,9 @@ async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: nu
 
   try {
     video.currentTime = 0;
-  } catch {}
+  } catch {
+    // Some browsers reject seeking generated preview blobs before playback starts.
+  }
   return resolved;
 }
 
@@ -266,7 +297,9 @@ async function verifyRecordedVideoBlob(blob: Blob, expectedSeconds: number) {
   } finally {
     try {
       preview.pause();
-    } catch {}
+    } catch {
+      // Best effort cleanup after preview verification.
+    }
     preview.remove();
     window.setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000);
   }
@@ -395,7 +428,7 @@ function TemplatesPage() {
   // ====== Video recording flow ======
   async function recordTemplateVideo(
     templateId: string,
-    prep: { width: number; height: number; canvasJson: any },
+    prep: { width: number; height: number; canvasJson: FabricCanvasJson },
   ) {
     const fabric = await import("fabric");
     const canvasEl = document.createElement("canvas");
@@ -421,14 +454,23 @@ function TemplatesPage() {
 
       // For every object that originated from a video, swap its FabricImage
       // backing element to an HTMLVideoElement that plays the signed URL.
-      const attachVideos = async (jsonList: any[], fabricList: any[]) => {
+      const attachVideos = async (jsonList: FabricCanvasObject[], fabricList: unknown[]) => {
         for (let i = 0; i < jsonList.length; i++) {
           const j = jsonList[i];
-          const fabricObj = fabricList[i];
+          const fabricObj = fabricList[i] as {
+            getObjects?: () => unknown[];
+            setElement?: (element: HTMLVideoElement) => void;
+            objectCaching?: boolean;
+          };
+          const getFabricChildren = fabricObj.getObjects;
           const videoSrc: string | undefined =
-            j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
+            typeof j?.videoSrc === "string" ? j.videoSrc : isVideoSrc(j?.src) ? j.src : undefined;
 
           if (videoSrc && fabricObj instanceof fabric.FabricImage) {
+            const imageObject = fabricObj as {
+              setElement?: (element: HTMLVideoElement) => void;
+              objectCaching?: boolean;
+            };
             const v = document.createElement("video");
             v.crossOrigin = "anonymous";
             v.muted = true;
@@ -445,20 +487,20 @@ function TemplatesPage() {
             v.style.pointerEvents = "none";
             document.body.appendChild(v);
             await waitForVideoCanPlay(v, videoSrc);
-            (fabricObj as any).setElement(v);
-            (fabricObj as any).objectCaching = false;
+            imageObject.setElement?.(v);
+            imageObject.objectCaching = false;
             videos.push(v);
             videoLayers.push({ video: v, json: j });
           }
 
-          const childJson = (j?.objects ?? j?._objects ?? []) as any[];
+          const childJson = j?.objects ?? j?._objects ?? [];
           const childFabric =
-            typeof fabricObj?.getObjects === "function" ? fabricObj.getObjects() : [];
+            typeof getFabricChildren === "function" ? getFabricChildren.call(fabricObj) : [];
           if (childJson.length && childFabric.length) await attachVideos(childJson, childFabric);
         }
       };
 
-      await attachVideos((prep.canvasJson.objects ?? []) as any[], objs as any[]);
+      await attachVideos(prep.canvasJson.objects ?? [], objs);
 
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
 
@@ -516,8 +558,10 @@ function TemplatesPage() {
           if (chunks.length === 0) reject(new Error("MediaRecorder produced no video chunks"));
           else resolve(new Blob(chunks, { type: outMime }));
         };
-        recorder!.onerror = (e) =>
-          reject(new Error(`MediaRecorder error: ${String((e as any).error?.message || e)}`));
+        recorder!.onerror = (e) => {
+          const errorEvent = e as Event & { error?: DOMException };
+          reject(new Error(`MediaRecorder error: ${errorEvent.error?.message || e.type}`));
+        };
       });
 
       // Start playback FIRST so the stream has frames, then start recording.
@@ -556,11 +600,15 @@ function TemplatesPage() {
       const mimeOut: "video/mp4" | "video/webm" = recorderMime.startsWith("video/mp4")
         ? "video/mp4"
         : "video/webm";
-      const verified = await verifyRecordedVideoBlob(blob, maxDur);
+      const uploadBlob =
+        mimeOut === "video/webm"
+          ? await fixWebmDuration(blob, Math.round(maxDur * 1000), { logger: false })
+          : blob;
+      const verified = await verifyRecordedVideoBlob(uploadBlob, maxDur);
       toast.success(
-        `Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(blob.size / 1024)} KB)`,
+        `Local video preview verified (${verified.durationSeconds.toFixed(1)}s, ${Math.round(uploadBlob.size / 1024)} KB)`,
       );
-      const base64 = await blobToBase64(blob);
+      const base64 = await blobToBase64(uploadBlob);
       return await uploadRenderedVideo({
         data: {
           templateId,
