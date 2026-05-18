@@ -462,6 +462,7 @@ function TemplatesPage() {
             setElement?: (element: HTMLVideoElement) => void;
             objectCaching?: boolean;
           };
+          const getFabricChildren = fabricObj.getObjects;
           const videoSrc: string | undefined =
             typeof j?.videoSrc === "string"
               ? j.videoSrc
@@ -470,6 +471,10 @@ function TemplatesPage() {
                 : undefined;
 
           if (videoSrc && fabricObj instanceof fabric.FabricImage) {
+            const imageObject = fabricObj as {
+              setElement?: (element: HTMLVideoElement) => void;
+              objectCaching?: boolean;
+            };
             const v = document.createElement("video");
             v.crossOrigin = "anonymous";
             v.muted = true;
@@ -486,15 +491,15 @@ function TemplatesPage() {
             v.style.pointerEvents = "none";
             document.body.appendChild(v);
             await waitForVideoCanPlay(v, videoSrc);
-            fabricObj.setElement?.(v);
-            fabricObj.objectCaching = false;
+            imageObject.setElement?.(v);
+            imageObject.objectCaching = false;
             videos.push(v);
             videoLayers.push({ video: v, json: j });
           }
 
           const childJson = j?.objects ?? j?._objects ?? [];
           const childFabric =
-            typeof fabricObj?.getObjects === "function" ? fabricObj.getObjects() : [];
+            typeof getFabricChildren === "function" ? getFabricChildren.call(fabricObj) : [];
           if (childJson.length && childFabric.length) await attachVideos(childJson, childFabric);
         }
       };
