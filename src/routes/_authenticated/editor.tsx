@@ -15,6 +15,7 @@ import { autoCompress } from "@/lib/compress";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEditorDialog";
+import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
@@ -409,6 +410,27 @@ function EditorPage() {
       setSquareItems((data ?? []) as SquareCacheItem[]);
     })();
   }, []);
+
+  // Layer Firebase-sourced Square catalog on top of the Supabase cache.
+  // When Firebase items load, they replace the cache entries. Editor stays
+  // usable when Firebase is unconfigured or offline (hook returns []).
+  const { items: firebaseItems } = useSquareCatalog();
+  const { state: squareSyncState } = useSquareSyncState();
+  const { trigger: triggerSquareSync, running: squareSyncRunning } = useTriggerSquareSync();
+  useEffect(() => {
+    if (!firebaseItems || firebaseItems.length === 0) return;
+    const mapped: SquareCacheItem[] = firebaseItems.map((it) => {
+      const primary = it.variations?.[0];
+      return {
+        square_item_id: it.squareItemId,
+        name: it.name || null,
+        description: it.description ?? null,
+        price_cents: primary?.priceCents ?? null,
+        currency: primary?.currency ?? null,
+      };
+    });
+    setSquareItems(mapped);
+  }, [firebaseItems]);
 
   const refreshBoundTexts = useCallback((items: SquareCacheItem[]) => {
     const fc = fcRef.current;
@@ -1057,6 +1079,39 @@ function EditorPage() {
             title="Refresh bound text layers from Square cache"
           >
             <RefreshCw className="size-4 mr-1.5" /> Refresh prices
+          </Button>
+          {squareSyncState && (
+            <span
+              className={
+                "text-[10px] px-1.5 py-0.5 rounded border " +
+                (squareSyncState.lastStatus === "error"
+                  ? "border-destructive text-destructive"
+                  : squareSyncState.lastStatus === "running"
+                  ? "border-muted-foreground text-muted-foreground"
+                  : "border-border text-muted-foreground")
+              }
+              title={squareSyncState.lastError ?? undefined}
+            >
+              Square: {squareSyncState.lastStatus ?? "idle"}
+            </span>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={squareSyncRunning}
+            onClick={async () => {
+              try {
+                const res = await triggerSquareSync();
+                toast.success(`Square sync complete (${res.itemCount} items)`);
+                if (firebaseItems.length) refreshBoundTexts(squareItems);
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "Square sync failed");
+              }
+            }}
+            title="Pull the latest catalog from Square via Firebase"
+          >
+            <RefreshCw className={"size-4 mr-1.5 " + (squareSyncRunning ? "animate-spin" : "")} />
+            {squareSyncRunning ? "Syncing…" : "Sync Square"}
           </Button>
           <Button onClick={onSave} disabled={saving}>
             <Save className="size-4 mr-1.5" /> {saving ? "Saving…" : "Save"}

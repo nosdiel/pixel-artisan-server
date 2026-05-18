@@ -25,6 +25,12 @@
  *     `processed: "true"` so the Storage trigger ignores its own output.
  */
 
+// Re-export Square Catalog sync functions so they deploy from the same codebase.
+const square = require("./square");
+exports.syncSquareCatalog = square.syncSquareCatalog;
+exports.scheduledSquareSync = square.scheduledSquareSync;
+exports.squareWebhook = square.squareWebhook;
+
 const path = require("path");
 const os = require("os");
 const fs = require("fs/promises");
