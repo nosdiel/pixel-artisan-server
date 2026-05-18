@@ -145,6 +145,7 @@ function EditorPage() {
   const [pendingBaseImage, setPendingBaseImage] = useState<PendingBaseImage | null>(null);
   const [customFonts, setCustomFonts] = useState<string[]>([]);
   const [uploadingFont, setUploadingFont] = useState(false);
+  const [pendingVideoFile, setPendingVideoFile] = useState<File | null>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
   const [squareItems, setSquareItems] = useState<SquareCacheItem[]>([]);
   const navigate = useNavigate();
