@@ -16,6 +16,7 @@ import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEditorDialog";
 import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
+import { uploadEditedMediaToFirebase } from "@/integrations/firebase/media";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
@@ -668,18 +669,21 @@ function EditorPage() {
   };
   const onUploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
-    const { data: ud } = await supabase.auth.getUser();
-    if (!ud.user) return;
-    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
-    const path = `${ud.user.id}/editor-assets/${nanoid(10)}.${ext}`;
-    const { error } = await supabase.storage.from("images").upload(path, file, { contentType: file.type, upsert: true });
-    if (error) {
-      toast.error(error.message);
-      return;
+    const tId = toast.loading("Uploading image…");
+    try {
+      const res = await uploadEditedMediaToFirebase({
+        kind: "image",
+        blob: file,
+        contentType: file.type || "image/png",
+        name: file.name,
+      });
+      toast.dismiss(tId);
+      await addImageFromUrl(res.url, res.path);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Image upload failed", { id: tId });
+    } finally {
+      e.target.value = "";
     }
-    const { data: signed } = await supabase.storage.from("images").createSignedUrl(path, 3600);
-    await addImageFromUrl(signed?.signedUrl ?? URL.createObjectURL(file), path);
-    e.target.value = "";
   };
 
   const videoRafRef = useRef<Set<number>>(new Set());
@@ -753,37 +757,31 @@ function EditorPage() {
     e.target.value = "";
   };
   const handleEditedVideoSave = async (result: EditedVideoResult) => {
-    const { data: ud } = await supabase.auth.getUser();
-    if (!ud.user) { setPendingVideoFile(null); return; }
-    const videoExt = result.videoMime === "video/mp4" ? "mp4" : "webm";
-    const baseId = nanoid(10);
-    const path = `${ud.user.id}/editor-assets/${baseId}.${videoExt}`;
-    const thumbPath = `${ud.user.id}/editor-assets/thumbnails/${baseId}.jpg`;
-    const tId = toast.loading("Uploading video…");
-    const { error } = await supabase.storage.from("images").upload(path, result.videoBlob, {
-      contentType: result.videoMime,
-      upsert: true,
-    });
-    if (error) { toast.error(error.message, { id: tId }); setPendingVideoFile(null); return; }
-    const { error: thumbErr } = await supabase.storage.from("images").upload(thumbPath, result.thumbnailBlob, {
-      contentType: "image/jpeg",
-      upsert: true,
-    });
-    if (thumbErr) console.warn("[video upload] thumbnail upload failed:", thumbErr.message);
-    const { data: signed, error: signErr } = await supabase.storage.from("images").createSignedUrl(path, 3600);
-    if (signErr || !signed?.signedUrl) {
-      toast.error(signErr?.message ?? "Could not get video URL", { id: tId });
-      setPendingVideoFile(null);
-      return;
-    }
-    toast.dismiss(tId);
+    const tId = toast.loading("Uploading edited video to Firebase…");
     try {
-      await addVideoFromUrl(signed.signedUrl, path);
+      const res = await uploadEditedMediaToFirebase({
+        kind: "video",
+        blob: result.videoBlob,
+        contentType: result.videoMime || "video/mp4",
+        thumbnailBlob: result.thumbnailBlob,
+        thumbnailContentType: "image/jpeg",
+        width: result.width ?? null,
+        height: result.height ?? null,
+        durationSeconds: result.durationSeconds ?? null,
+        name: pendingVideoFile?.name,
+      });
+      toast.success("Uploaded — Cloud Function will compress shortly", { id: tId });
+      try {
+        await addVideoFromUrl(res.url, res.path);
+      } catch (err) {
+        console.error("[video upload] failed to place on canvas:", err);
+        toast.error(err instanceof Error ? err.message : "Could not place video");
+      }
     } catch (err) {
-      console.error("[video upload] failed to place on canvas:", err);
-      toast.error(err instanceof Error ? err.message : "Could not place video");
+      toast.error(err instanceof Error ? err.message : "Video upload failed", { id: tId });
+    } finally {
+      setPendingVideoFile(null);
     }
-    setPendingVideoFile(null);
   };
   const addText = () => {
     const fc = fcRef.current; if (!fc || !fabric) return;
