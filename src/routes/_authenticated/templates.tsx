@@ -510,12 +510,13 @@ function TemplatesPage() {
       const hasPlayableDuration = durations.some(
         (duration) => Number.isFinite(duration) && duration > 0,
       );
-      const maxDur = hasPlayableDuration
-        ? Math.min(
-            VIDEO_RECORDING_MAX_SECONDS,
-            Math.max(VIDEO_RECORDING_MIN_SECONDS, VIDEO_RECORDING_MIN_SECONDS),
-          )
+      const longestSource = hasPlayableDuration
+        ? Math.max(...durations.filter((d) => Number.isFinite(d) && d > 0))
         : VIDEO_RECORDING_MIN_SECONDS;
+      const maxDur = Math.min(
+        VIDEO_RECORDING_MAX_SECONDS,
+        Math.max(VIDEO_RECORDING_MIN_SECONDS, longestSource),
+      );
 
       const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
       const canvasTrack = stream.getVideoTracks()[0] as MediaStreamTrack & {
