@@ -46,6 +46,13 @@ function getCanvasSize(presetKey: string) {
   return PRESETS[presetKey] ?? PRESETS["1920x1080"];
 }
 
+function applyCanvasDisplayZoom(canvas: Fabric.Canvas, width: number, height: number, displayZoom: number) {
+  canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+  canvas.setDimensions({ width, height }, { backstoreOnly: true });
+  canvas.setDimensions({ width: width * displayZoom, height: height * displayZoom }, { cssOnly: true });
+  canvas.requestRenderAll();
+}
+
 function formatSquareValue(item: SquareCacheItem | undefined, field: SquareField): string {
   if (!item) return "";
   if (field === "name") return item.name ?? "";
@@ -259,9 +266,7 @@ function EditorPage() {
     const fc = new fabric.Canvas(canvasRef.current, { width: w, height: h, backgroundColor: bgColor, preserveObjectStacking: true });
     fcRef.current = fc;
     const fittedZoom = getFitZoom(preset);
-    fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
-    fc.setZoom(fittedZoom);
-    fc.setDimensions({ width: w * fittedZoom, height: h * fittedZoom }, { cssOnly: true });
+    applyCanvasDisplayZoom(fc, w, h, fittedZoom);
     setZoom(fittedZoom);
 
     const onSel = () => { setActive(fc.getActiveObject() ?? null); refresh(); };
@@ -518,16 +523,7 @@ function EditorPage() {
     const fc = fcRef.current;
     if (!fc) return;
     const { w, h } = getCanvasSize(preset);
-    // Order matters: set the backstore (natural) size first so it matches the
-    // canvas's aspect ratio, then the CSS size scaled by zoom, then the
-    // viewport zoom. Doing setZoom first then resizing the backstore can
-    // leave the upper/lower canvas elements with mismatched style dimensions
-    // (the symptom: the image looks stretched horizontally or vertically
-    // when zooming in/out).
-    fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
-    fc.setDimensions({ width: w * zoom, height: h * zoom }, { cssOnly: true });
-    fc.setZoom(zoom);
-    fc.requestRenderAll();
+    applyCanvasDisplayZoom(fc, w, h, zoom);
   }, [zoom, preset]);
 
   // Apply bg color
@@ -809,17 +805,11 @@ function EditorPage() {
         padding: 0,
       });
       const { w: cw, h: ch } = getCanvasSize(preset);
-      // Use the underlying image element's natural size — target.width can
-      // be the cropped width if the image was previously cropped.
+      const originalSize = (target as any).getOriginalSize?.() as { width?: number; height?: number } | undefined;
       const el = (target as any).getElement?.() as HTMLImageElement | HTMLVideoElement | undefined;
-      const naturalW = (el && ("naturalWidth" in el ? el.naturalWidth : (el as HTMLVideoElement).videoWidth)) || target.width!;
-      const naturalH = (el && ("naturalHeight" in el ? el.naturalHeight : (el as HTMLVideoElement).videoHeight)) || target.height!;
-      target.set({ width: naturalW, height: naturalH });
-      const iw = naturalW;
-      const ih = naturalH;
-      // FILL the canvas (cover) — use the larger ratio so the image covers
-      // the entire canvas, then center-crop any overflow. Previously this
-      // used Math.min (contain) which left letterbox bars.
+      const iw = originalSize?.width || (el && ("naturalWidth" in el ? el.naturalWidth : (el as HTMLVideoElement).videoWidth)) || target.width!;
+      const ih = originalSize?.height || (el && ("naturalHeight" in el ? el.naturalHeight : (el as HTMLVideoElement).videoHeight)) || target.height!;
+      target.set({ width: iw, height: ih, cropX: 0, cropY: 0 });
       const scale = Math.max(cw / iw, ch / ih);
       target.set({ scaleX: scale, scaleY: scale });
       target.set({
@@ -845,16 +835,14 @@ function EditorPage() {
     try {
       fc.discardActiveObject();
       const { w, h } = getCanvasSize(preset);
-      const prevZoom = fc.getZoom();
-      fc.setZoom(1);
+      const prevZoom = zoom;
+      applyCanvasDisplayZoom(fc, w, h, 1);
       fc.setDimensions({ width: w, height: h });
       fc.renderAll();
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
       const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
-      fc.setZoom(prevZoom);
-      fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
-      fc.setDimensions({ width: w * prevZoom, height: h * prevZoom }, { cssOnly: true });
+      applyCanvasDisplayZoom(fc, w, h, prevZoom);
 
       const blob = await (await fetch(dataUrl)).blob();
       const { best, variants, originalSize, width: imageWidth, height: imageHeight } = await autoCompress(blob);
