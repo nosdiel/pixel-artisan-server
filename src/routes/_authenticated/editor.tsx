@@ -841,16 +841,14 @@ function EditorPage() {
     try {
       fc.discardActiveObject();
       const { w, h } = getCanvasSize(preset);
-      const prevZoom = fc.getZoom();
-      fc.setZoom(1);
+      const prevZoom = zoom;
+      applyCanvasDisplayZoom(fc, w, h, 1);
       fc.setDimensions({ width: w, height: h });
       fc.renderAll();
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
       const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
-      fc.setZoom(prevZoom);
-      fc.setDimensions({ width: w, height: h }, { backstoreOnly: true });
-      fc.setDimensions({ width: w * prevZoom, height: h * prevZoom }, { cssOnly: true });
+      applyCanvasDisplayZoom(fc, w, h, prevZoom);
 
       const blob = await (await fetch(dataUrl)).blob();
       const { best, variants, originalSize, width: imageWidth, height: imageHeight } = await autoCompress(blob);
