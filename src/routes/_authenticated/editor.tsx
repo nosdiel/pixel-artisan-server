@@ -809,8 +809,14 @@ function EditorPage() {
         padding: 0,
       });
       const { w: cw, h: ch } = getCanvasSize(preset);
-      const iw = target.width!;
-      const ih = target.height!;
+      // Use the underlying image element's natural size — target.width can
+      // be the cropped width if the image was previously cropped.
+      const el = (target as any).getElement?.() as HTMLImageElement | HTMLVideoElement | undefined;
+      const naturalW = (el && ("naturalWidth" in el ? el.naturalWidth : (el as HTMLVideoElement).videoWidth)) || target.width!;
+      const naturalH = (el && ("naturalHeight" in el ? el.naturalHeight : (el as HTMLVideoElement).videoHeight)) || target.height!;
+      target.set({ width: naturalW, height: naturalH });
+      const iw = naturalW;
+      const ih = naturalH;
       // FILL the canvas (cover) — use the larger ratio so the image covers
       // the entire canvas, then center-crop any overflow. Previously this
       // used Math.min (contain) which left letterbox bars.
