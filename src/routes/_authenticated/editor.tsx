@@ -16,7 +16,6 @@ import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEditorDialog";
 import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
-import { formatPrice } from "@/lib/square-binding";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
@@ -415,7 +414,7 @@ function EditorPage() {
   // Layer Firebase-sourced Square catalog on top of the Supabase cache.
   // When Firebase items load, they replace the cache entries. Editor stays
   // usable when Firebase is unconfigured or offline (hook returns []).
-  const { items: firebaseItems, error: firebaseCatalogError } = useSquareCatalog();
+  const { items: firebaseItems } = useSquareCatalog();
   const { state: squareSyncState } = useSquareSyncState();
   const { trigger: triggerSquareSync, running: squareSyncRunning } = useTriggerSquareSync();
   useEffect(() => {
