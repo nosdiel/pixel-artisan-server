@@ -428,7 +428,7 @@ function TemplatesPage() {
   // ====== Video recording flow ======
   async function recordTemplateVideo(
     templateId: string,
-    prep: { width: number; height: number; canvasJson: any },
+    prep: { width: number; height: number; canvasJson: FabricCanvasJson },
   ) {
     const fabric = await import("fabric");
     const canvasEl = document.createElement("canvas");
@@ -454,12 +454,20 @@ function TemplatesPage() {
 
       // For every object that originated from a video, swap its FabricImage
       // backing element to an HTMLVideoElement that plays the signed URL.
-      const attachVideos = async (jsonList: any[], fabricList: any[]) => {
+      const attachVideos = async (jsonList: FabricCanvasObject[], fabricList: unknown[]) => {
         for (let i = 0; i < jsonList.length; i++) {
           const j = jsonList[i];
-          const fabricObj = fabricList[i];
+          const fabricObj = fabricList[i] as {
+            getObjects?: () => unknown[];
+            setElement?: (element: HTMLVideoElement) => void;
+            objectCaching?: boolean;
+          };
           const videoSrc: string | undefined =
-            j?.videoSrc || (isVideoSrc(j?.src) ? j.src : undefined);
+            typeof j?.videoSrc === "string"
+              ? j.videoSrc
+              : isVideoSrc(j?.src)
+                ? j.src
+                : undefined;
 
           if (videoSrc && fabricObj instanceof fabric.FabricImage) {
             const v = document.createElement("video");
@@ -478,20 +486,20 @@ function TemplatesPage() {
             v.style.pointerEvents = "none";
             document.body.appendChild(v);
             await waitForVideoCanPlay(v, videoSrc);
-            (fabricObj as any).setElement(v);
-            (fabricObj as any).objectCaching = false;
+            fabricObj.setElement?.(v);
+            fabricObj.objectCaching = false;
             videos.push(v);
             videoLayers.push({ video: v, json: j });
           }
 
-          const childJson = (j?.objects ?? j?._objects ?? []) as any[];
+          const childJson = j?.objects ?? j?._objects ?? [];
           const childFabric =
             typeof fabricObj?.getObjects === "function" ? fabricObj.getObjects() : [];
           if (childJson.length && childFabric.length) await attachVideos(childJson, childFabric);
         }
       };
 
-      await attachVideos((prep.canvasJson.objects ?? []) as any[], objs as any[]);
+      await attachVideos(prep.canvasJson.objects ?? [], objs);
 
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
 
