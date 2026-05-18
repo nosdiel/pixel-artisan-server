@@ -205,7 +205,10 @@ function waitForVideoFrame(video: HTMLVideoElement, label: string, timeoutMs = 5
   });
 }
 
-async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: number) {
+async function resolveVideoDuration(
+  video: HTMLVideoElement,
+  fallbackSeconds: number | null,
+): Promise<number | null> {
   if (Number.isFinite(video.duration) && video.duration >= fallbackSeconds * 0.75) {
     return video.duration;
   }
@@ -220,7 +223,9 @@ async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: nu
     };
     const done = () => {
       const duration =
-        Number.isFinite(video.duration) && video.duration >= fallbackSeconds * 0.75
+        Number.isFinite(video.duration) &&
+        video.duration > 0 &&
+        (fallbackSeconds == null || video.duration >= fallbackSeconds * 0.75)
           ? video.duration
           : fallbackSeconds;
       cleanup();
