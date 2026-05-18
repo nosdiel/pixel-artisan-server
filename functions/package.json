@@ -1,0 +1,25 @@
+{
+  "name": "nini-signage-compressor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Firebase Cloud Functions (gen2) that compress images and videos uploaded to Storage, generate video thumbnails, and update the media/{mediaDocId} Firestore document.",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.14.0",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.1.1",
+    "fluent-ffmpeg": "^2.1.3",
+    "image-size": "^1.1.1",
+    "sharp": "^0.33.5"
+  }
+}
