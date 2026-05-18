@@ -527,7 +527,6 @@ function TemplatesPage() {
       if (!ctx) throw new Error("Could not create video recording canvas context");
       const renderFrame = () => {
         staticCanvas.renderAll();
-        for (const layer of videoLayers) drawVideoLayer(ctx, layer);
         requestCanvasFrame?.();
       };
       const tick = () => {
