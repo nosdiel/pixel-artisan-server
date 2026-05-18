@@ -464,11 +464,7 @@ function TemplatesPage() {
           };
           const getFabricChildren = fabricObj.getObjects;
           const videoSrc: string | undefined =
-            typeof j?.videoSrc === "string"
-              ? j.videoSrc
-              : isVideoSrc(j?.src)
-                ? j.src
-                : undefined;
+            typeof j?.videoSrc === "string" ? j.videoSrc : isVideoSrc(j?.src) ? j.src : undefined;
 
           if (videoSrc && fabricObj instanceof fabric.FabricImage) {
             const imageObject = fabricObj as {
