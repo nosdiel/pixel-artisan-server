@@ -1081,6 +1081,39 @@ function EditorPage() {
           >
             <RefreshCw className="size-4 mr-1.5" /> Refresh prices
           </Button>
+          {squareSyncState && (
+            <span
+              className={
+                "text-[10px] px-1.5 py-0.5 rounded border " +
+                (squareSyncState.lastStatus === "error"
+                  ? "border-destructive text-destructive"
+                  : squareSyncState.lastStatus === "running"
+                  ? "border-muted-foreground text-muted-foreground"
+                  : "border-border text-muted-foreground")
+              }
+              title={squareSyncState.lastError ?? undefined}
+            >
+              Square: {squareSyncState.lastStatus ?? "idle"}
+            </span>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={squareSyncRunning}
+            onClick={async () => {
+              try {
+                const res = await triggerSquareSync();
+                toast.success(`Square sync complete (${res.itemCount} items)`);
+                if (firebaseItems.length) refreshBoundTexts(squareItems);
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "Square sync failed");
+              }
+            }}
+            title="Pull the latest catalog from Square via Firebase"
+          >
+            <RefreshCw className={"size-4 mr-1.5 " + (squareSyncRunning ? "animate-spin" : "")} />
+            {squareSyncRunning ? "Syncing…" : "Sync Square"}
+          </Button>
           <Button onClick={onSave} disabled={saving}>
             <Save className="size-4 mr-1.5" /> {saving ? "Saving…" : "Save"}
           </Button>
