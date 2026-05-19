@@ -433,6 +433,18 @@ function TemplatesPage() {
     const canvasEl = document.createElement("canvas");
     canvasEl.width = prep.width;
     canvasEl.height = prep.height;
+    // Attach off-screen so captureStream + fabric text rendering have a
+    // live DOM canvas. Without this, some browsers capture an empty/partial
+    // frame stream and bound-text layers can fail to render on top of the
+    // video. Mirrors the PNG publish flow above.
+    canvasEl.style.position = "fixed";
+    canvasEl.style.left = "-9999px";
+    canvasEl.style.top = "0";
+    canvasEl.style.width = "1px";
+    canvasEl.style.height = "1px";
+    canvasEl.style.opacity = "0";
+    canvasEl.style.pointerEvents = "none";
+    document.body.appendChild(canvasEl);
     const staticCanvas = new fabric.StaticCanvas(canvasEl, {
       width: prep.width,
       height: prep.height,
