@@ -515,6 +515,30 @@ function TemplatesPage() {
 
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
 
+      // Force every object (including text layers on top of the video) to
+      // re-render from scratch. Without this, IText/Textbox layers loaded
+      // via loadFromJSON on a StaticCanvas that hasn't rendered yet keep an
+      // empty internal cache and never draw — so bound price/name text on
+      // top of the video disappears from the recorded MP4.
+      const markDirty = (list: unknown[]) => {
+        for (const o of list) {
+          const item = o as {
+            set?: (k: string, v: unknown) => void;
+            dirty?: boolean;
+            getObjects?: () => unknown[];
+          };
+          try {
+            item.set?.("dirty", true);
+          } catch {
+            // Some fabric types ignore unknown keys; that's fine.
+          }
+          const children = typeof item.getObjects === "function" ? item.getObjects() : [];
+          if (children?.length) markDirty(children);
+        }
+      };
+      markDirty(objs);
+      staticCanvas.renderAll();
+
       const durations = await Promise.all(
         videos.map((v) => resolveVideoDuration(v, VIDEO_RECORDING_MIN_SECONDS)),
       );
