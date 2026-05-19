@@ -433,6 +433,18 @@ function TemplatesPage() {
     const canvasEl = document.createElement("canvas");
     canvasEl.width = prep.width;
     canvasEl.height = prep.height;
+    // Attach off-screen so captureStream + fabric text rendering have a
+    // live DOM canvas. Without this, some browsers capture an empty/partial
+    // frame stream and bound-text layers can fail to render on top of the
+    // video. Mirrors the PNG publish flow above.
+    canvasEl.style.position = "fixed";
+    canvasEl.style.left = "-9999px";
+    canvasEl.style.top = "0";
+    canvasEl.style.width = "1px";
+    canvasEl.style.height = "1px";
+    canvasEl.style.opacity = "0";
+    canvasEl.style.pointerEvents = "none";
+    document.body.appendChild(canvasEl);
     const staticCanvas = new fabric.StaticCanvas(canvasEl, {
       width: prep.width,
       height: prep.height,
@@ -502,6 +514,30 @@ function TemplatesPage() {
       await attachVideos(prep.canvasJson.objects ?? [], objs);
 
       if (videos.length === 0) throw new Error("No playable videos found on canvas");
+
+      // Force every object (including text layers on top of the video) to
+      // re-render from scratch. Without this, IText/Textbox layers loaded
+      // via loadFromJSON on a StaticCanvas that hasn't rendered yet keep an
+      // empty internal cache and never draw — so bound price/name text on
+      // top of the video disappears from the recorded MP4.
+      const markDirty = (list: unknown[]) => {
+        for (const o of list) {
+          const item = o as {
+            set?: (k: string, v: unknown) => void;
+            dirty?: boolean;
+            getObjects?: () => unknown[];
+          };
+          try {
+            item.set?.("dirty", true);
+          } catch {
+            // Some fabric types ignore unknown keys; that's fine.
+          }
+          const children = typeof item.getObjects === "function" ? item.getObjects() : [];
+          if (children?.length) markDirty(children);
+        }
+      };
+      markDirty(objs);
+      staticCanvas.renderAll();
 
       const durations = await Promise.all(
         videos.map((v) => resolveVideoDuration(v, VIDEO_RECORDING_MIN_SECONDS)),
