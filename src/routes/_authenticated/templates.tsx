@@ -29,10 +29,10 @@ import {
 } from "@/lib/square.functions";
 import {
   prepareTemplatePublish,
-  publishRenderedTemplate,
-  publishRenderedVideoTemplate,
   listTemplatesWithPublishStatus,
+  recordTemplatePublish,
 } from "@/lib/signage.functions";
+import { uploadEditedMediaToFirebase } from "@/integrations/firebase/media";
 
 export const Route = createFileRoute("/_authenticated/templates")({ component: TemplatesPage });
 
@@ -47,6 +47,14 @@ function formatPrice(cents: number | null, currency: string | null) {
 function isVideoSrc(src: unknown): src is string {
   if (typeof src !== "string") return false;
   return /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i.test(src);
+}
+
+function base64ToBlob(base64: string, contentType: string): Blob {
+  const bin = atob(base64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: contentType });
 }
 
 type FabricCanvasObject = {
@@ -87,19 +95,6 @@ function canvasJsonHasVideo(canvasJson: unknown): boolean {
   const root = canvasJson as FabricCanvasJson | null;
   for (const o of root?.objects ?? []) if (visit(o)) return true;
   return false;
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
-    reader.readAsDataURL(blob);
-  });
 }
 
 const VIDEO_RECORDING_FPS = 30;
@@ -347,8 +342,7 @@ function TemplatesPage() {
   const saveBindings = useServerFn(setTemplateBindings);
   const deleteTpl = useServerFn(deleteTemplate);
   const preparePublish = useServerFn(prepareTemplatePublish);
-  const uploadRendered = useServerFn(publishRenderedTemplate);
-  const uploadRenderedVideo = useServerFn(publishRenderedVideoTemplate);
+  const recordPublish = useServerFn(recordTemplatePublish);
   const fetchPublishStatus = useServerFn(listTemplatesWithPublishStatus);
 
   const itemsQ = useQuery({ queryKey: ["square-items"], queryFn: () => fetchItems() });
@@ -420,14 +414,28 @@ function TemplatesPage() {
         throw new Error("Browser produced an empty PNG");
       }
 
-      return await uploadRendered({
-        data: {
-          templateId,
-          pngBase64,
+      const pngBlob = base64ToBlob(pngBase64, "image/png");
+      try {
+        const media = await uploadEditedMediaToFirebase({
+          kind: "image",
+          blob: pngBlob,
+          contentType: "image/png",
           width: prep.width,
           height: prep.height,
-        },
-      });
+          name: `${prep.name ?? "template"} (${templateId})`,
+        });
+        console.log("[publish] uploaded image to Firebase", media);
+        await recordPublish({
+          data: { templateId, status: "success", downloadUrl: media.url },
+        });
+        return { ok: true as const, downloadUrl: media.url, media };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        await recordPublish({
+          data: { templateId, status: "error", error: message },
+        }).catch(() => {});
+        throw e;
+      }
     } finally {
       staticCanvas.dispose();
     }
@@ -436,7 +444,7 @@ function TemplatesPage() {
   // ====== Video recording flow ======
   async function recordTemplateVideo(
     templateId: string,
-    prep: { width: number; height: number; canvasJson: FabricCanvasJson },
+    prep: { width: number; height: number; canvasJson: FabricCanvasJson; name?: string },
   ) {
     const fabric = await import("fabric");
     const canvasEl = document.createElement("canvas");
@@ -688,17 +696,28 @@ function TemplatesPage() {
       toast.success(
         `Local video preview verified (${clampedDurationSeconds.toFixed(1)}s, ${Math.round(uploadBlob.size / 1024)} KB)`,
       );
-      const base64 = await blobToBase64(uploadBlob);
-      return await uploadRenderedVideo({
-        data: {
-          templateId,
-          videoBase64: base64,
-          mimeType: mimeOut,
+      try {
+        const media = await uploadEditedMediaToFirebase({
+          kind: "video",
+          blob: uploadBlob,
+          contentType: mimeOut,
           width: prep.width,
           height: prep.height,
-          durationMs: Math.round(clampedDurationSeconds * 1000),
-        },
-      });
+          durationSeconds: clampedDurationSeconds,
+          name: `${prep.name ?? "template"} (${templateId})`,
+        });
+        console.log("[publish] uploaded video to Firebase", media);
+        await recordPublish({
+          data: { templateId, status: "success", downloadUrl: media.url },
+        });
+        return { ok: true as const, downloadUrl: media.url, media };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        await recordPublish({
+          data: { templateId, status: "error", error: message },
+        }).catch(() => {});
+        throw e;
+      }
     } finally {
       if (rafId != null) cancelAnimationFrame(rafId);
       try {
