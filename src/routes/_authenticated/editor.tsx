@@ -16,7 +16,7 @@ import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEditorDialog";
 import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
-import { uploadEditedMediaToFirebase } from "@/integrations/firebase/media";
+import { uploadEditedMediaToFirebase, waitForMediaReady } from "@/integrations/firebase/media";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
@@ -677,8 +677,12 @@ function EditorPage() {
         contentType: file.type || "image/png",
         name: file.name,
       });
+      toast.loading("Processing image…", { id: tId });
+      const ready = await waitForMediaReady(res.mediaDocId).catch(() => null);
+      const finalUrl = (ready?.url as string) || res.url;
+      const finalPath = (ready?.path as string) || res.path;
       toast.dismiss(tId);
-      await addImageFromUrl(res.url, res.path);
+      await addImageFromUrl(finalUrl, finalPath);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Image upload failed", { id: tId });
     } finally {
@@ -770,9 +774,16 @@ function EditorPage() {
         durationSeconds: result.durationSeconds ?? null,
         name: pendingVideoFile?.name,
       });
-      toast.success("Uploaded — Cloud Function will compress shortly", { id: tId });
+      toast.loading("Cloud Function is transcoding video…", { id: tId });
+      const ready = await waitForMediaReady(res.mediaDocId).catch((err) => {
+        console.warn("[video upload] waitForMediaReady failed:", err);
+        return null;
+      });
+      const finalUrl = (ready?.url as string) || res.url;
+      const finalPath = (ready?.path as string) || res.path;
+      toast.success("Video ready", { id: tId });
       try {
-        await addVideoFromUrl(res.url, res.path);
+        await addVideoFromUrl(finalUrl, finalPath);
       } catch (err) {
         console.error("[video upload] failed to place on canvas:", err);
         toast.error(err instanceof Error ? err.message : "Could not place video");
