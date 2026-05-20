@@ -11,7 +11,8 @@ import {
   waitForMediaReady,
   type FirebaseMediaDoc,
 } from "@/integrations/firebase/media";
-import { getFirebaseInitError } from "@/integrations/firebase/client";
+import { ensureFirebaseAuth, getFirebase, getFirebaseInitError } from "@/integrations/firebase/client";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 
 type MediaEditorSearch = {
   companyId: string;
@@ -200,6 +201,50 @@ function MediaEditorPage() {
         thumbnailURL: finalThumb,
         path: (ready.path as string) || uploaded.path,
       };
+
+      // Mirror the processed media into companies/{companyId}/media/{mediaId}
+      // so the Nini Renderer can list it for that company. Root media/{id}
+      // already exists and is what the compressor wrote to.
+      if (companyId) {
+        try {
+          const fb = getFirebase();
+          if (fb) {
+            await ensureFirebaseAuth();
+            const companyMediaRef = doc(
+              fb.db,
+              "companies",
+              companyId,
+              "media",
+              uploaded.mediaDocId,
+            );
+            await setDoc(
+              companyMediaRef,
+              {
+                mediaDocId: uploaded.mediaDocId,
+                url: finalUrl,
+                path: finalRes.path,
+                thumbnailURL: finalThumb,
+                thumbnailPath: (ready.thumbnailPath as string | null) ?? uploaded.thumbnailPath,
+                width: ready.width ?? null,
+                height: ready.height ?? null,
+                length: ready.length ?? null,
+                size: ready.size ?? null,
+                type: ready.type ?? kind,
+                contentType: ready.contentType ?? null,
+                status: "ready",
+                templateId: templateId || null,
+                companyId,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            );
+          }
+        } catch (mirrorErr) {
+          console.warn("[media-editor] failed to mirror to companies/{companyId}/media", mirrorErr);
+        }
+      }
+
       setResult(finalRes);
       setStage("done");
       toast.success("Media ready");
