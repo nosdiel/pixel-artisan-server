@@ -131,9 +131,11 @@ export const Route = createFileRoute("/editor")({
 
 function EditorPage() {
   const { template: templateIdParam, image: imageIdParam, companyId: companyIdParam, returnUrl: returnUrlParam } = Route.useSearch();
+  const params = new URLSearchParams(window.location.search);
+  const externalCompanyId = params.get("companyId") || undefined;
   // External-launch mode (Nini Signage Renderer): bypass Supabase auth and
   // write media directly to the customer Firebase project.
-  const externalMode = !!(templateIdParam && companyIdParam);
+  const externalMode = !!(templateIdParam && externalCompanyId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasHostRef = useRef<HTMLDivElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
@@ -157,6 +159,12 @@ function EditorPage() {
   const fontInputRef = useRef<HTMLInputElement>(null);
   const [squareItems, setSquareItems] = useState<SquareCacheItem[]>([]);
   const navigate = useNavigate();
+
+  const resolveOwnerId = useCallback(async () => {
+    const { data: ud } = await supabase.auth.getUser();
+    const ownerId = ud.user?.id || externalCompanyId;
+    return ownerId;
+  }, [externalCompanyId]);
 
   const getFitZoom = useCallback((presetKey = preset) => {
     const host = canvasHostRef.current;
@@ -432,7 +440,7 @@ function EditorPage() {
   // `companies/{companyId}` doc (squareMenuUrl, square_items subcollection,
   // company-scoped sync state). Outside external mode the hooks fall back
   // to the legacy global Firestore paths.
-  const squareScopeCompanyId = externalMode ? companyIdParam ?? null : null;
+  const squareScopeCompanyId = externalMode ? externalCompanyId ?? null : null;
   const { items: firebaseItems } = useSquareCatalog(squareScopeCompanyId);
   const { state: squareSyncState } = useSquareSyncState(squareScopeCompanyId);
   const { trigger: triggerSquareSync, running: squareSyncRunning } = useTriggerSquareSync(squareScopeCompanyId);
@@ -594,8 +602,7 @@ function EditorPage() {
     }
   };
   const loadCustomFonts = async () => {
-    const { data: ud } = await supabase.auth.getUser();
-    const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+    const ownerId = await resolveOwnerId();
     if (!ownerId) return;
     const { data } = await supabase.storage.from("fonts").list(ownerId, { limit: 100 });
     if (!data) return;
@@ -612,8 +619,7 @@ function EditorPage() {
     if (!ok) { toast.error("Use .otf, .ttf, .woff or .woff2"); return; }
     setUploadingFont(true);
     try {
-      const { data: ud } = await supabase.auth.getUser();
-      const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+      const ownerId = await resolveOwnerId();
       if (!ownerId) { toast.error("Sign in required"); return; }
       const safe = file.name.replace(/[^\w.\-]+/g, "_");
       const path = `${ownerId}/${safe}`;
@@ -632,8 +638,7 @@ function EditorPage() {
   };
 
   const loadAssets = async () => {
-    const { data: ud } = await supabase.auth.getUser();
-    const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+    const ownerId = await resolveOwnerId();
     if (!ownerId) return;
     const { data } = await supabase.from("images").select("id, title, variants").eq("user_id", ownerId).order("created_at", { ascending: false }).limit(50);
     if (!data) return;
@@ -694,7 +699,7 @@ function EditorPage() {
     try {
       if (externalMode) {
         const res = await uploadCompanyMedia({
-          companyId: companyIdParam!,
+          companyId: externalCompanyId!,
           templateId: templateIdParam!,
           kind: "image",
           blob: file,
@@ -799,7 +804,7 @@ function EditorPage() {
     try {
       if (externalMode) {
         const res = await uploadCompanyMedia({
-          companyId: companyIdParam!,
+          companyId: externalCompanyId!,
           templateId: templateIdParam!,
           kind: "video",
           blob: result.videoBlob,
@@ -951,7 +956,7 @@ function EditorPage() {
       // project and redirect back to the Nini Renderer with the new media.
       if (externalMode) {
         const res = await uploadCompanyMedia({
-          companyId: companyIdParam!,
+          companyId: externalCompanyId!,
           templateId: templateIdParam!,
           kind: "image",
           blob: best.blob,
@@ -973,14 +978,13 @@ function EditorPage() {
         return;
       }
 
-      const { data: ud } = await supabase.auth.getUser();
-      const userId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
-      if (!userId) { toast.error("Sign in required"); return; }
+      const ownerId = await resolveOwnerId();
+      if (!ownerId) { toast.error("Sign in required"); return; }
 
       // Persist editable template (insert or update)
       let savedTemplateId = templateId;
       const tplPayload = {
-        user_id: userId,
+        user_id: ownerId,
         name: title,
         preset,
         width: w,
@@ -1005,19 +1009,19 @@ function EditorPage() {
       }
 
       const { data: existingImage } = imageIdParam
-        ? await supabase.from("images").select("id, slug").eq("user_id", userId).eq("id", imageIdParam).maybeSingle()
+        ? await supabase.from("images").select("id, slug").eq("user_id", ownerId).eq("id", imageIdParam).maybeSingle()
         : savedTemplateId
           ? await supabase
               .from("images")
               .select("id, slug")
-              .eq("user_id", userId)
+              .eq("user_id", ownerId)
               .eq("template_id", savedTemplateId)
               .order("created_at", { ascending: false })
               .limit(1)
               .maybeSingle()
           : { data: null };
       const slug = existingImage?.slug ?? nanoid(10);
-      const baseFolder = `${userId}/${slug}`;
+      const baseFolder = `${ownerId}/${slug}`;
       const variantRecords: { format: string; path: string; size: number; quality: number }[] = [];
       for (const v of variants) {
         const path = `${baseFolder}/image.${v.format === "jpeg" ? "jpg" : v.format}`;
@@ -1028,7 +1032,7 @@ function EditorPage() {
       variantRecords.sort((x, y) => x.size - y.size);
 
       const imagePayload = {
-        user_id: userId, slug, title, width: imageWidth, height: imageHeight,
+        user_id: ownerId, slug, title, width: imageWidth, height: imageHeight,
         original_size_bytes: originalSize, optimized_size_bytes: best.size,
         variants: variantRecords, preset, source: "editor",
         template_id: savedTemplateId,
