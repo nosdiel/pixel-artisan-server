@@ -12,6 +12,7 @@ import {
   addDoc,
   collection,
   doc,
+  onSnapshot,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -45,6 +46,22 @@ export type UploadEditedMediaResult = {
   url: string;
   thumbnailPath: string | null;
   thumbnailURL: string | null;
+};
+
+export type FirebaseMediaDoc = {
+  id: string;
+  status?: string;
+  url?: string;
+  path?: string;
+  thumbnailURL?: string | null;
+  thumbnailPath?: string | null;
+  width?: number | null;
+  height?: number | null;
+  length?: number | null;
+  size?: number | null;
+  type?: string;
+  contentType?: string;
+  [k: string]: unknown;
 };
 
 function extFor(contentType: string, fallback: string): string {
@@ -84,7 +101,8 @@ export async function uploadEditedMediaToFirebase(
     ownerUid: uid,
     type: input.kind === "video" ? "video" : "image",
     name: input.name ?? null,
-    status: "uploading",
+    status: "processing",
+    creationDate: serverTimestamp(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     width: input.width ?? null,
@@ -124,7 +142,9 @@ export async function uploadEditedMediaToFirebase(
   }
 
   // 4. Update doc with the upload result. Width/height/length may be
-  //    refined later by the Cloud Function processor.
+  //    refined later by the Cloud Function processor, which also flips
+  //    status from "processing" to "ready" once compression + thumbnail
+  //    generation completes.
   await updateDoc(doc(fb.db, "media", mediaDocId), {
     url,
     path,
@@ -133,11 +153,56 @@ export async function uploadEditedMediaToFirebase(
     size: input.blob.size,
     type: input.kind === "video" ? "video" : "image",
     contentType: input.contentType,
-    status: "uploaded",
+    status: "processing",
     updatedAt: serverTimestamp(),
   });
 
   return { mediaDocId, path, url, thumbnailPath, thumbnailURL };
+}
+
+/**
+ * Subscribe to media/{mediaDocId} and resolve with the final document once
+ * the deployed Cloud Function flips `status` to `"ready"`. Rejects on
+ * `status === "error"` or after the timeout.
+ */
+export function waitForMediaReady(
+  mediaDocId: string,
+  opts: { timeoutMs?: number; onUpdate?: (doc: FirebaseMediaDoc) => void } = {},
+): Promise<FirebaseMediaDoc> {
+  const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
+  return new Promise((resolve, reject) => {
+    const fb = getFirebase();
+    if (!fb) {
+      reject(new Error(getFirebaseInitError() ?? "Firebase is not configured"));
+      return;
+    }
+    const ref = doc(fb.db, "media", mediaDocId);
+    const timer = setTimeout(() => {
+      unsub();
+      reject(new Error(`Timed out waiting for media ${mediaDocId} to be ready`));
+    }, timeoutMs);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = { id: snap.id, ...(snap.data() as Record<string, unknown>) } as FirebaseMediaDoc;
+        opts.onUpdate?.(data);
+        if (data.status === "ready") {
+          clearTimeout(timer);
+          unsub();
+          resolve(data);
+        } else if (data.status === "error") {
+          clearTimeout(timer);
+          unsub();
+          reject(new Error((data.error as string) || "Cloud Function reported error"));
+        }
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 /**
