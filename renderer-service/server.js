@@ -18,7 +18,7 @@ const { spawn } = require("child_process");
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
-const RENDERER_VERSION = "2026-05-16-video-upload";
+const RENDERER_VERSION = "2026-05-20-video-ffmpeg-mp4";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
