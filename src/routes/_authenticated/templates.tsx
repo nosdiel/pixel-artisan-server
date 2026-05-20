@@ -713,10 +713,16 @@ function TemplatesPage() {
           name: `${prep.name ?? "template"} (${templateId})`,
         });
         console.log("[publish] uploaded video to Firebase", media);
-        await recordPublish({
-          data: { templateId, status: "success", downloadUrl: media.url },
+        toast.info("Waiting for Cloud Function to transcode video…");
+        const ready = await waitForMediaReady(media.mediaDocId, {
+          onUpdate: (d) => console.log("[publish] media doc update", d),
         });
-        return { ok: true as const, downloadUrl: media.url, media };
+        const finalUrl = (ready.url as string) || media.url;
+        console.log("[publish] video ready", ready);
+        await recordPublish({
+          data: { templateId, status: "success", downloadUrl: finalUrl },
+        });
+        return { ok: true as const, downloadUrl: finalUrl, media: ready };
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         await recordPublish({
