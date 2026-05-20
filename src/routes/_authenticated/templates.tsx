@@ -32,7 +32,7 @@ import {
   listTemplatesWithPublishStatus,
   recordTemplatePublish,
 } from "@/lib/signage.functions";
-import { uploadEditedMediaToFirebase } from "@/integrations/firebase/media";
+import { uploadEditedMediaToFirebase, waitForMediaReady } from "@/integrations/firebase/media";
 
 export const Route = createFileRoute("/_authenticated/templates")({ component: TemplatesPage });
 
