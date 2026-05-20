@@ -1153,11 +1153,28 @@ function EditorPage() {
             variant="outline"
             size="sm"
             onClick={async () => {
-              const { data } = await supabase
-                .from("square_items_cache")
-                .select("square_item_id, name, description, price_cents, currency")
-                .order("name", { ascending: true });
-              const items = (data ?? []) as SquareCacheItem[];
+              let items: SquareCacheItem[] = [];
+              if (externalMode) {
+                // External launch: use the Firebase catalog already
+                // streaming into `firebaseItems` from
+                // companies/{companyId}/square_items.
+                items = firebaseItems.map((it) => {
+                  const primary = it.variations?.[0];
+                  return {
+                    square_item_id: it.squareItemId,
+                    name: it.name || null,
+                    description: it.description ?? null,
+                    price_cents: primary?.priceCents ?? null,
+                    currency: primary?.currency ?? null,
+                  };
+                });
+              } else {
+                const { data } = await supabase
+                  .from("square_items_cache")
+                  .select("square_item_id, name, description, price_cents, currency")
+                  .order("name", { ascending: true });
+                items = (data ?? []) as SquareCacheItem[];
+              }
               setSquareItems(items);
               const n = refreshBoundTexts(items);
               toast.success(n ? `Updated ${n} bound layer${n === 1 ? "" : "s"}` : "All bound layers up to date");
