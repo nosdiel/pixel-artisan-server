@@ -1,7 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useRef, useState } from "react";
-import { z } from "zod";
-import { zodValidator, fallback } from "@tanstack/zod-adapter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,15 +13,20 @@ import {
 } from "@/integrations/firebase/media";
 import { getFirebaseInitError } from "@/integrations/firebase/client";
 
-const searchSchema = z.object({
-  companyId: fallback(z.string(), "").default(""),
-  templateId: fallback(z.string(), "").default(""),
-  mediaDocId: z.string().optional(),
-  returnUrl: z.string().optional(),
-});
+type MediaEditorSearch = {
+  companyId: string;
+  templateId: string;
+  mediaDocId?: string;
+  returnUrl?: string;
+};
 
 export const Route = createFileRoute("/media-editor")({
-  validateSearch: zodValidator(searchSchema),
+  validateSearch: (raw: Record<string, unknown>): MediaEditorSearch => ({
+    companyId: typeof raw.companyId === "string" ? raw.companyId : "",
+    templateId: typeof raw.templateId === "string" ? raw.templateId : "",
+    mediaDocId: typeof raw.mediaDocId === "string" ? raw.mediaDocId : undefined,
+    returnUrl: typeof raw.returnUrl === "string" ? raw.returnUrl : undefined,
+  }),
   component: MediaEditorPage,
   head: () => ({
     meta: [
