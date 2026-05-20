@@ -17,7 +17,7 @@ const PRESET_SIZES: Record<string, { w: number; h: number }> = {
   "1080x1080": { w: 1080, h: 1080 },
 };
 
-const REQUIRED_RENDERER_VERSION = "2026-05-16-video-upload";
+const REQUIRED_RENDERER_VERSION = "2026-05-20-video-ffmpeg-mp4";
 
 function rendererUpgradeMessage(actualVersion?: string | null) {
   const actual = actualVersion ? ` Current /health rendererVersion is "${actualVersion}".` : "";
