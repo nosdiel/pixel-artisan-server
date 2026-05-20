@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEditorDialog";
 import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
 import { uploadEditedMediaToFirebase, waitForMediaReady } from "@/integrations/firebase/media";
+import { uploadCompanyMedia, redirectToReturnUrl } from "@/integrations/firebase/company-media";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
@@ -124,11 +125,15 @@ export const Route = createFileRoute("/editor")({
     template: typeof s.template === "string" ? s.template : undefined,
     image: typeof s.image === "string" ? s.image : undefined,
     companyId: typeof s.companyId === "string" ? s.companyId : undefined,
+    returnUrl: typeof s.returnUrl === "string" ? s.returnUrl : undefined,
   }),
 });
 
 function EditorPage() {
-  const { template: templateIdParam, image: imageIdParam } = Route.useSearch();
+  const { template: templateIdParam, image: imageIdParam, companyId: companyIdParam, returnUrl: returnUrlParam } = Route.useSearch();
+  // External-launch mode (Nini Signage Renderer): bypass Supabase auth and
+  // write media directly to the customer Firebase project.
+  const externalMode = !!(templateIdParam && companyIdParam);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasHostRef = useRef<HTMLDivElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
