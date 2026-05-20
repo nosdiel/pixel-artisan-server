@@ -83,6 +83,16 @@ async function getSignedUrl(file) {
   return url;
 }
 
+function createFirebaseDownloadToken() {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : crypto.randomBytes(16).toString("hex");
+}
+
+function getFirebaseDownloadUrl(storagePath, token) {
+  return `https://firebasestorage.googleapis.com/v0/b/${BUCKET_NAME}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+}
+
 function ffprobe(file) {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(file, (err, data) => (err ? reject(err) : resolve(data)));
