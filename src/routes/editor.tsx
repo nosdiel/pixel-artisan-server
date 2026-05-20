@@ -938,6 +938,33 @@ function EditorPage() {
 
       const blob = await (await fetch(dataUrl)).blob();
       const { best, variants, originalSize, width: imageWidth, height: imageHeight } = await autoCompress(blob);
+
+      // External-launch mode: upload directly to the customer Firebase
+      // project and redirect back to the Nini Renderer with the new media.
+      if (externalMode) {
+        const res = await uploadCompanyMedia({
+          companyId: companyIdParam!,
+          templateId: templateIdParam!,
+          kind: "image",
+          blob: best.blob,
+          contentType: best.blob.type || "image/png",
+          name: title,
+          width: imageWidth,
+          height: imageHeight,
+        });
+        toast.success(
+          `Saved! Compressed ${Math.round((1 - best.size / originalSize) * 100)}%`,
+        );
+        if (returnUrlParam) {
+          redirectToReturnUrl(returnUrlParam, {
+            mediaDocId: res.mediaDocId,
+            url: res.url,
+            thumbnailURL: res.thumbnailURL,
+          });
+        }
+        return;
+      }
+
       const { data: ud } = await supabase.auth.getUser();
       const userId = ud.user!.id;
 
