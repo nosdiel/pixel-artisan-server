@@ -419,14 +419,28 @@ function TemplatesPage() {
         throw new Error("Browser produced an empty PNG");
       }
 
-      return await uploadRendered({
-        data: {
-          templateId,
-          pngBase64,
+      const pngBlob = base64ToBlob(pngBase64, "image/png");
+      try {
+        const media = await uploadEditedMediaToFirebase({
+          kind: "image",
+          blob: pngBlob,
+          contentType: "image/png",
           width: prep.width,
           height: prep.height,
-        },
-      });
+          name: `${prep.name ?? "template"} (${templateId})`,
+        });
+        console.log("[publish] uploaded image to Firebase", media);
+        await recordPublish({
+          data: { templateId, status: "success", downloadUrl: media.url },
+        });
+        return { ok: true as const, downloadUrl: media.url, media };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        await recordPublish({
+          data: { templateId, status: "error", error: message },
+        }).catch(() => {});
+        throw e;
+      }
     } finally {
       staticCanvas.dispose();
     }
