@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEditorDialog";
 import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
 import { uploadEditedMediaToFirebase, waitForMediaReady } from "@/integrations/firebase/media";
+import { uploadCompanyMedia, redirectToReturnUrl } from "@/integrations/firebase/company-media";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
@@ -124,11 +125,15 @@ export const Route = createFileRoute("/editor")({
     template: typeof s.template === "string" ? s.template : undefined,
     image: typeof s.image === "string" ? s.image : undefined,
     companyId: typeof s.companyId === "string" ? s.companyId : undefined,
+    returnUrl: typeof s.returnUrl === "string" ? s.returnUrl : undefined,
   }),
 });
 
 function EditorPage() {
-  const { template: templateIdParam, image: imageIdParam } = Route.useSearch();
+  const { template: templateIdParam, image: imageIdParam, companyId: companyIdParam, returnUrl: returnUrlParam } = Route.useSearch();
+  // External-launch mode (Nini Signage Renderer): bypass Supabase auth and
+  // write media directly to the customer Firebase project.
+  const externalMode = !!(templateIdParam && companyIdParam);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasHostRef = useRef<HTMLDivElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
@@ -233,6 +238,12 @@ function EditorPage() {
   // Load template metadata BEFORE canvas init so preset matches
   useEffect(() => {
     if (!templateIdParam) return;
+    if (externalMode) {
+      // In external-launch mode we don't have a Supabase row for the
+      // template; just use the id from the URL and start with a blank canvas.
+      setTemplateId(templateIdParam);
+      return;
+    }
     (async () => {
       const { data, error } = await supabase
         .from("templates")
@@ -256,13 +267,13 @@ function EditorPage() {
       }
       setPendingCanvasJson(data.canvas_json ? await withFreshImageUrls(data.canvas_json) : null);
     })();
-  }, [templateIdParam, imageIdParam, loadGalleryImageAsTemplate, withFreshImageUrls]);
+  }, [templateIdParam, imageIdParam, loadGalleryImageAsTemplate, withFreshImageUrls, externalMode]);
 
   // Fall back to the rendered gallery image when the row has no editable template yet
   useEffect(() => {
-    if (!imageIdParam || templateIdParam) return;
+    if (!imageIdParam || templateIdParam || externalMode) return;
     void loadGalleryImageAsTemplate(imageIdParam);
-  }, [imageIdParam, templateIdParam, loadGalleryImageAsTemplate]);
+  }, [imageIdParam, templateIdParam, loadGalleryImageAsTemplate, externalMode]);
 
   // Initialize canvas
   useEffect(() => {
@@ -404,6 +415,7 @@ function EditorPage() {
 
   // Load Square catalog cache (for binding text layers to item fields)
   useEffect(() => {
+    if (externalMode) return;
     (async () => {
       const { data } = await supabase
         .from("square_items_cache")
@@ -411,7 +423,7 @@ function EditorPage() {
         .order("name", { ascending: true });
       setSquareItems((data ?? []) as SquareCacheItem[]);
     })();
-  }, []);
+  }, [externalMode]);
 
   // Layer Firebase-sourced Square catalog on top of the Supabase cache.
   // When Firebase items load, they replace the cache entries. Editor stays
@@ -563,8 +575,8 @@ function EditorPage() {
   }, [bgColor]);
 
   // Load asset library
-  useEffect(() => { void loadAssets(); }, []);
-  useEffect(() => { void loadCustomFonts(); }, []);
+  useEffect(() => { if (!externalMode) void loadAssets(); }, [externalMode]);
+  useEffect(() => { if (!externalMode) void loadCustomFonts(); }, [externalMode]);
 
   const registerFont = async (family: string, url: string) => {
     try {
@@ -672,6 +684,19 @@ function EditorPage() {
     const file = e.target.files?.[0]; if (!file) return;
     const tId = toast.loading("Uploading image…");
     try {
+      if (externalMode) {
+        const res = await uploadCompanyMedia({
+          companyId: companyIdParam!,
+          templateId: templateIdParam!,
+          kind: "image",
+          blob: file,
+          contentType: file.type || "image/png",
+          name: file.name,
+        });
+        toast.dismiss(tId);
+        await addImageFromUrl(res.url, res.path);
+        return;
+      }
       const res = await uploadEditedMediaToFirebase({
         kind: "image",
         blob: file,
@@ -764,6 +789,25 @@ function EditorPage() {
   const handleEditedVideoSave = async (result: EditedVideoResult) => {
     const tId = toast.loading("Uploading edited video to Firebase…");
     try {
+      if (externalMode) {
+        const res = await uploadCompanyMedia({
+          companyId: companyIdParam!,
+          templateId: templateIdParam!,
+          kind: "video",
+          blob: result.videoBlob,
+          contentType: result.videoMime || "video/mp4",
+          thumbnailBlob: result.thumbnailBlob,
+          thumbnailContentType: "image/jpeg",
+          width: result.width ?? null,
+          height: result.height ?? null,
+          durationSeconds: result.durationSeconds ?? null,
+          name: pendingVideoFile?.name,
+        });
+        toast.success("Video ready", { id: tId });
+        try { await addVideoFromUrl(res.url, res.path); }
+        catch (err) { toast.error(err instanceof Error ? err.message : "Could not place video"); }
+        return;
+      }
       const res = await uploadEditedMediaToFirebase({
         kind: "video",
         blob: result.videoBlob,
@@ -894,6 +938,33 @@ function EditorPage() {
 
       const blob = await (await fetch(dataUrl)).blob();
       const { best, variants, originalSize, width: imageWidth, height: imageHeight } = await autoCompress(blob);
+
+      // External-launch mode: upload directly to the customer Firebase
+      // project and redirect back to the Nini Renderer with the new media.
+      if (externalMode) {
+        const res = await uploadCompanyMedia({
+          companyId: companyIdParam!,
+          templateId: templateIdParam!,
+          kind: "image",
+          blob: best.blob,
+          contentType: best.blob.type || "image/png",
+          name: title,
+          width: imageWidth,
+          height: imageHeight,
+        });
+        toast.success(
+          `Saved! Compressed ${Math.round((1 - best.size / originalSize) * 100)}%`,
+        );
+        if (returnUrlParam) {
+          redirectToReturnUrl(returnUrlParam, {
+            mediaDocId: res.mediaDocId,
+            url: res.url,
+            thumbnailURL: res.thumbnailURL,
+          });
+        }
+        return;
+      }
+
       const { data: ud } = await supabase.auth.getUser();
       const userId = ud.user!.id;
 
