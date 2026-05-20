@@ -136,3 +136,34 @@ export const listTemplatesWithPublishStatus = createServerFn({ method: "GET" })
     if (error) throw new Error(error.message);
     return { rows: data ?? [] };
   });
+
+/**
+ * Record the outcome of a direct-to-Firebase publish so the Templates page
+ * can show the last published URL / status. The actual media file already
+ * lives in Firebase Storage (and is mirrored in the Firestore media/{id}
+ * doc) before this is called.
+ */
+export const recordTemplatePublish = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      templateId: z.string().uuid(),
+      status: z.enum(["success", "error"]),
+      downloadUrl: z.string().url().max(2000).optional().nullable(),
+      error: z.string().max(1000).optional().nullable(),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("templates")
+      .update({
+        last_published_at: new Date().toISOString(),
+        last_published_url: data.downloadUrl ?? null,
+        last_publish_status: data.status,
+        last_publish_error: data.status === "error" ? (data.error ?? "Unknown error") : null,
+      })
+      .eq("id", data.templateId)
+      .eq("user_id", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
