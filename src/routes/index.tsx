@@ -1,10 +1,22 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { ImageIcon, Sparkles, Zap, Cloud, Code2, ShoppingBag, ArrowRight } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: Index,
+  validateSearch: (s: Record<string, unknown>) => ({
+    templateId: typeof s.templateId === "string" ? s.templateId : undefined,
+    companyId: typeof s.companyId === "string" ? s.companyId : undefined,
+  }),
+  beforeLoad: ({ search }) => {
+    if (search.templateId && search.companyId) {
+      throw redirect({
+        to: "/editor",
+        search: { template: search.templateId, companyId: search.companyId },
+      });
+    }
+  },
   head: () => ({
     meta: [
       { title: "NiNi Digital Solutions — Image compression & editor for digital signage" },

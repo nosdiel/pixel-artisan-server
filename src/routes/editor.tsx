@@ -117,12 +117,13 @@ function presetForImage(width: number, height: number) {
   return height > width ? "1080x1920" : "1920x1080";
 }
 
-export const Route = createFileRoute("/_authenticated/editor")({
+export const Route = createFileRoute("/editor")({
   component: EditorPage,
   ssr: false,
   validateSearch: (s: Record<string, unknown>) => ({
     template: typeof s.template === "string" ? s.template : undefined,
     image: typeof s.image === "string" ? s.image : undefined,
+    companyId: typeof s.companyId === "string" ? s.companyId : undefined,
   }),
 });
 
