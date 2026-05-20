@@ -123,6 +123,7 @@ export const Route = createFileRoute("/editor")({
   validateSearch: (s: Record<string, unknown>) => ({
     template: typeof s.template === "string" ? s.template : undefined,
     image: typeof s.image === "string" ? s.image : undefined,
+    companyId: typeof s.companyId === "string" ? s.companyId : undefined,
   }),
 });
 
