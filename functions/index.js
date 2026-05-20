@@ -191,50 +191,118 @@ function extractThumbnail(localIn, localOut) {
 }
 
 async function processVideo({ file, contentType }) {
-  const ext = (path.extname(file.name) || ".mp4").toLowerCase();
-  const localIn = tmpPath(ext);
+  const originalExt = (path.extname(file.name) || ".mp4").toLowerCase();
+  const localIn = tmpPath(originalExt);
   await file.download({ destination: localIn });
 
-  // Compress (always produce mp4 bytes, but keep the original storage path
-  // and contentType so the app doesn't have to change references).
+  let originalSize = null;
+  try {
+    const stat = await fs.stat(localIn);
+    originalSize = stat.size;
+  } catch {
+    /* ignore */
+  }
+  logger.info("video: starting compression", {
+    path: file.name,
+    originalContentType: contentType || null,
+    originalSize,
+  });
+
+  // Always produce playable MP4 bytes. ffmpeg writes to a separate temp file
+  // so the original object is never touched until ffmpeg succeeds.
   const localOut = tmpPath(".mp4");
-  await compressVideo(localIn, localOut);
+  try {
+    await compressVideo(localIn, localOut);
+  } catch (err) {
+    logger.error("video: ffmpeg failed", { path: file.name, error: String(err) });
+    await fs.unlink(localIn).catch(() => {});
+    await fs.unlink(localOut).catch(() => {});
+    throw err;
+  }
+  let compressedSize = null;
+  try {
+    const stat = await fs.stat(localOut);
+    compressedSize = stat.size;
+  } catch {
+    /* ignore */
+  }
+  logger.info("video: ffmpeg success", { path: file.name, compressedSize });
 
   // Probe the compressed output for accurate width/height/duration.
   const probe = await ffprobe(localOut);
   const vstream = (probe.streams || []).find((s) => s.codec_type === "video") || {};
   const width = vstream.width || null;
   const height = vstream.height || null;
-  const length = probe.format && probe.format.duration ? Number(probe.format.duration) : null; // seconds
+  const length = probe.format && probe.format.duration ? Number(probe.format.duration) : null;
 
   // Thumbnail.
   const thumbLocal = tmpPath(".jpg");
   await extractThumbnail(localOut, thumbLocal);
 
-  // Upload compressed video (replace in place).
+  // Force MP4 storage path + content type so the served bytes match what
+  // browsers expect. If the source was .webm/.mov/etc the new object lives
+  // alongside it at the .mp4 path; we then delete the original to avoid a
+  // stale duplicate.
+  const finalStoragePath = file.name.replace(/\.[^./]+$/, "") + ".mp4";
+  const FINAL_CONTENT_TYPE = "video/mp4";
+
   await bucket.upload(localOut, {
-    destination: file.name,
-    contentType: contentType || "video/mp4",
+    destination: finalStoragePath,
+    contentType: FINAL_CONTENT_TYPE,
     resumable: false,
     metadata: {
+      contentType: FINAL_CONTENT_TYPE,
+      contentDisposition: `inline; filename="${path.basename(finalStoragePath)}"`,
       cacheControl: "public, max-age=3600",
       metadata: { processed: "true" },
     },
   });
-  const replaced = bucket.file(file.name);
-  const url = await getSignedUrl(replaced);
+  const replaced = bucket.file(finalStoragePath);
+
+  // Ensure stored metadata.contentType is exactly video/mp4 (some upload
+  // paths in GCS preserve the originating header otherwise).
+  await replaced.setMetadata({ contentType: FINAL_CONTENT_TYPE });
+
   const [meta] = await replaced.getMetadata();
-  const size = Number(meta.size) || null;
+  const size = Number(meta.size) || compressedSize || null;
+  logger.info("video: uploaded mp4", {
+    path: finalStoragePath,
+    storedContentType: meta.contentType,
+    size,
+  });
+  if (meta.contentType !== FINAL_CONTENT_TYPE) {
+    logger.error("video: storage contentType mismatch", {
+      expected: FINAL_CONTENT_TYPE,
+      actual: meta.contentType,
+      path: finalStoragePath,
+    });
+  }
+
+  // Delete the original if its path differs (e.g. .webm source).
+  if (finalStoragePath !== file.name) {
+    try {
+      await file.delete({ ignoreNotFound: true });
+      logger.info("video: deleted original source", { path: file.name });
+    } catch (err) {
+      logger.warn("video: failed to delete original source", {
+        path: file.name,
+        error: String(err),
+      });
+    }
+  }
+
+  const url = await getSignedUrl(replaced);
+  logger.info("video: signed url generated", { path: finalStoragePath, url });
 
   // Upload thumbnail to thumbnails/<same-path>.jpg
-  const thumbStoragePath = `thumbnails/${file.name.replace(/\.[^./]+$/, "")}.jpg`;
+  const thumbStoragePath = `thumbnails/${finalStoragePath.replace(/\.[^./]+$/, "")}.jpg`;
   await bucket.upload(thumbLocal, {
     destination: thumbStoragePath,
     contentType: "image/jpeg",
     resumable: false,
     metadata: {
       cacheControl: "public, max-age=3600",
-      metadata: { processed: "true", thumbnailFor: file.name },
+      metadata: { processed: "true", thumbnailFor: finalStoragePath },
     },
   });
   const thumbFile = bucket.file(thumbStoragePath);
@@ -248,8 +316,8 @@ async function processVideo({ file, contentType }) {
     kind: "video",
     fields: {
       url,
-      path: file.name,
-      type: contentType || "video/mp4",
+      path: finalStoragePath,
+      type: FINAL_CONTENT_TYPE,
       size,
       width,
       height,
