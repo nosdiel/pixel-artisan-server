@@ -1,23 +1,35 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { Link } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { createFileRoute, Link, Navigate, redirect } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { ImageIcon, Sparkles, Zap, Cloud, Code2, ShoppingBag, ArrowRight } from "lucide-react";
 
+function getStringParam(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function getLaunchParams(search: Record<string, unknown>) {
+  return {
+    templateId: getStringParam(search.templateId),
+    companyId: getStringParam(search.companyId),
+  };
+}
+
 export const Route = createFileRoute("/")({
-  component: Index,
   validateSearch: (s: Record<string, unknown>) => ({
-    templateId: typeof s.templateId === "string" ? s.templateId : undefined,
-    companyId: typeof s.companyId === "string" ? s.companyId : undefined,
+    templateId: getStringParam(s.templateId),
+    companyId: getStringParam(s.companyId),
   }),
   beforeLoad: ({ search }) => {
-    if (search.templateId && search.companyId) {
+    const { templateId, companyId } = getLaunchParams(search);
+
+    if (templateId && companyId) {
       throw redirect({
         to: "/editor",
-        search: { template: search.templateId, companyId: search.companyId },
+        search: { template: templateId, companyId },
+        replace: true,
       });
     }
   },
+  component: Index,
   head: () => ({
     meta: [
       { title: "NiNi Digital Solutions — Image compression & editor for digital signage" },
@@ -28,23 +40,11 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const { templateId, companyId } = Route.useSearch();
-  const navigate = useNavigate();
-  useEffect(() => {
-    if (templateId && companyId) {
-      navigate({
-        to: "/editor",
-        search: { template: templateId, companyId },
-        replace: true,
-      });
-    }
-  }, [templateId, companyId, navigate]);
+
   if (templateId && companyId) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Opening editor…
-      </div>
-    );
+    return <Navigate to="/editor" search={{ template: templateId, companyId }} replace />;
   }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/60 backdrop-blur sticky top-0 z-40 bg-background/80">
