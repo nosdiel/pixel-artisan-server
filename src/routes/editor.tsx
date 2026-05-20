@@ -117,7 +117,7 @@ function presetForImage(width: number, height: number) {
   return height > width ? "1080x1920" : "1920x1080";
 }
 
-export const Route = createFileRoute("/_authenticated/editor")({
+export const Route = createFileRoute("/editor")({
   component: EditorPage,
   ssr: false,
   validateSearch: (s: Record<string, unknown>) => ({
