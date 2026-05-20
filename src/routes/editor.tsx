@@ -699,7 +699,7 @@ function EditorPage() {
     try {
       if (externalMode) {
         const res = await uploadCompanyMedia({
-          companyId: companyIdParam!,
+          companyId: externalCompanyId!,
           templateId: templateIdParam!,
           kind: "image",
           blob: file,
@@ -804,7 +804,7 @@ function EditorPage() {
     try {
       if (externalMode) {
         const res = await uploadCompanyMedia({
-          companyId: companyIdParam!,
+          companyId: externalCompanyId!,
           templateId: templateIdParam!,
           kind: "video",
           blob: result.videoBlob,
@@ -956,7 +956,7 @@ function EditorPage() {
       // project and redirect back to the Nini Renderer with the new media.
       if (externalMode) {
         const res = await uploadCompanyMedia({
-          companyId: companyIdParam!,
+          companyId: externalCompanyId!,
           templateId: templateIdParam!,
           kind: "image",
           blob: best.blob,
