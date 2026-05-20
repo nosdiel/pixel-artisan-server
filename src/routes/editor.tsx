@@ -238,6 +238,12 @@ function EditorPage() {
   // Load template metadata BEFORE canvas init so preset matches
   useEffect(() => {
     if (!templateIdParam) return;
+    if (externalMode) {
+      // In external-launch mode we don't have a Supabase row for the
+      // template; just use the id from the URL and start with a blank canvas.
+      setTemplateId(templateIdParam);
+      return;
+    }
     (async () => {
       const { data, error } = await supabase
         .from("templates")
@@ -261,13 +267,13 @@ function EditorPage() {
       }
       setPendingCanvasJson(data.canvas_json ? await withFreshImageUrls(data.canvas_json) : null);
     })();
-  }, [templateIdParam, imageIdParam, loadGalleryImageAsTemplate, withFreshImageUrls]);
+  }, [templateIdParam, imageIdParam, loadGalleryImageAsTemplate, withFreshImageUrls, externalMode]);
 
   // Fall back to the rendered gallery image when the row has no editable template yet
   useEffect(() => {
-    if (!imageIdParam || templateIdParam) return;
+    if (!imageIdParam || templateIdParam || externalMode) return;
     void loadGalleryImageAsTemplate(imageIdParam);
-  }, [imageIdParam, templateIdParam, loadGalleryImageAsTemplate]);
+  }, [imageIdParam, templateIdParam, loadGalleryImageAsTemplate, externalMode]);
 
   // Initialize canvas
   useEffect(() => {
@@ -409,6 +415,7 @@ function EditorPage() {
 
   // Load Square catalog cache (for binding text layers to item fields)
   useEffect(() => {
+    if (externalMode) return;
     (async () => {
       const { data } = await supabase
         .from("square_items_cache")
@@ -416,7 +423,7 @@ function EditorPage() {
         .order("name", { ascending: true });
       setSquareItems((data ?? []) as SquareCacheItem[]);
     })();
-  }, []);
+  }, [externalMode]);
 
   // Layer Firebase-sourced Square catalog on top of the Supabase cache.
   // When Firebase items load, they replace the cache entries. Editor stays
@@ -568,8 +575,8 @@ function EditorPage() {
   }, [bgColor]);
 
   // Load asset library
-  useEffect(() => { void loadAssets(); }, []);
-  useEffect(() => { void loadCustomFonts(); }, []);
+  useEffect(() => { if (!externalMode) void loadAssets(); }, [externalMode]);
+  useEffect(() => { if (!externalMode) void loadCustomFonts(); }, [externalMode]);
 
   const registerFont = async (family: string, url: string) => {
     try {
