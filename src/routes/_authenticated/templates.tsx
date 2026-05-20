@@ -109,6 +109,7 @@ const VIDEO_RECORDING_BITRATE = 3_000_000;
 type VideoLayer = {
   video: HTMLVideoElement;
   json: FabricCanvasObject;
+  fabricObject: unknown;
 };
 
 function pickRecorderMimeType() {
