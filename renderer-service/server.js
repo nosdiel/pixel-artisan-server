@@ -292,16 +292,97 @@ function decodeVideoPayload(input, mimeType) {
 
 async function uploadVideoBuffer(buffer, storagePath, mimeType) {
   const file = bucket.file(storagePath);
+  const token = createFirebaseDownloadToken();
   await file.save(buffer, {
     contentType: mimeType,
     resumable: false,
-    metadata: { cacheControl: "public, max-age=60" },
+    metadata: {
+      contentDisposition: `inline; filename="${path.basename(storagePath)}"`,
+      cacheControl: "public, max-age=60",
+      metadata: { firebaseStorageDownloadTokens: token },
+    },
   });
-  const [url] = await file.getSignedUrl({
-    action: "read",
-    expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+  await file.setMetadata({
+    contentType: mimeType,
+    contentDisposition: `inline; filename="${path.basename(storagePath)}"`,
+    metadata: { firebaseStorageDownloadTokens: token },
   });
+  const [meta] = await file.getMetadata();
+  console.log("[upload-video] storage metadata", {
+    storagePath,
+    contentType: meta.contentType,
+    size: meta.size,
+  });
+  if (meta.contentType !== mimeType) {
+    throw new Error(`Storage metadata contentType mismatch: expected ${mimeType}, got ${meta.contentType}`);
+  }
+  const url = getFirebaseDownloadUrl(storagePath, token);
+  console.log("[upload-video] signed URL generated", { storagePath, url });
   return url;
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 12000) stderr = stderr.slice(-12000);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-2000)}`));
+    });
+  });
+}
+
+async function transcodeVideoToMp4(buffer, inputMimeType) {
+  const inputExt = inputMimeType === "video/webm" ? ".webm" : ".mp4";
+  const id = crypto.randomBytes(8).toString("hex");
+  const inputPath = path.join(os.tmpdir(), `upload-${id}${inputExt}`);
+  const outputPath = path.join(os.tmpdir(), `upload-${id}.mp4`);
+  await fsp.writeFile(inputPath, buffer);
+  try {
+    console.log("[upload-video] ffmpeg start", { inputMimeType, originalSize: buffer.length });
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inputPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a?",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "23",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-movflags",
+      "+faststart",
+      outputPath,
+    ]);
+    const output = await fsp.readFile(outputPath);
+    console.log("[upload-video] ffmpeg success", {
+      originalSize: buffer.length,
+      compressedSize: output.length,
+      contentType: "video/mp4",
+    });
+    return output;
+  } catch (err) {
+    console.error("[upload-video] ffmpeg error", err);
+    throw err;
+  } finally {
+    await fsp.unlink(inputPath).catch(() => {});
+    await fsp.unlink(outputPath).catch(() => {});
+  }
 }
 
 app.post("/upload-video", authMiddleware, async (req, res) => {
