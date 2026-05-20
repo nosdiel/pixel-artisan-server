@@ -131,9 +131,11 @@ export const Route = createFileRoute("/editor")({
 
 function EditorPage() {
   const { template: templateIdParam, image: imageIdParam, companyId: companyIdParam, returnUrl: returnUrlParam } = Route.useSearch();
+  const params = new URLSearchParams(window.location.search);
+  const externalCompanyId = params.get("companyId") || undefined;
   // External-launch mode (Nini Signage Renderer): bypass Supabase auth and
   // write media directly to the customer Firebase project.
-  const externalMode = !!(templateIdParam && companyIdParam);
+  const externalMode = !!(templateIdParam && externalCompanyId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasHostRef = useRef<HTMLDivElement>(null);
   const fcRef = useRef<Fabric.Canvas | null>(null);
@@ -157,6 +159,12 @@ function EditorPage() {
   const fontInputRef = useRef<HTMLInputElement>(null);
   const [squareItems, setSquareItems] = useState<SquareCacheItem[]>([]);
   const navigate = useNavigate();
+
+  const resolveOwnerId = useCallback(async () => {
+    const { data: ud } = await supabase.auth.getUser();
+    const ownerId = ud.user?.id || externalCompanyId;
+    return ownerId;
+  }, [externalCompanyId]);
 
   const getFitZoom = useCallback((presetKey = preset) => {
     const host = canvasHostRef.current;
@@ -432,7 +440,7 @@ function EditorPage() {
   // `companies/{companyId}` doc (squareMenuUrl, square_items subcollection,
   // company-scoped sync state). Outside external mode the hooks fall back
   // to the legacy global Firestore paths.
-  const squareScopeCompanyId = externalMode ? companyIdParam ?? null : null;
+  const squareScopeCompanyId = externalMode ? externalCompanyId ?? null : null;
   const { items: firebaseItems } = useSquareCatalog(squareScopeCompanyId);
   const { state: squareSyncState } = useSquareSyncState(squareScopeCompanyId);
   const { trigger: triggerSquareSync, running: squareSyncRunning } = useTriggerSquareSync(squareScopeCompanyId);
