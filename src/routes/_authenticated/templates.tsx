@@ -97,19 +97,6 @@ function canvasJsonHasVideo(canvasJson: unknown): boolean {
   return false;
 }
 
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
-    reader.readAsDataURL(blob);
-  });
-}
-
 const VIDEO_RECORDING_FPS = 30;
 const VIDEO_RECORDING_MIN_SECONDS = 10;
 const VIDEO_RECORDING_MAX_SECONDS = 20;
