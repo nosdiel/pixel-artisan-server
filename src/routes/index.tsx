@@ -1,5 +1,6 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ImageIcon, Sparkles, Zap, Cloud, Code2, ShoppingBag, ArrowRight } from "lucide-react";
 
@@ -26,6 +27,24 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
+  const { templateId, companyId } = Route.useSearch();
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (templateId && companyId) {
+      navigate({
+        to: "/editor",
+        search: { template: templateId, companyId },
+        replace: true,
+      });
+    }
+  }, [templateId, companyId, navigate]);
+  if (templateId && companyId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+        Opening editor…
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/60 backdrop-blur sticky top-0 z-40 bg-background/80">
