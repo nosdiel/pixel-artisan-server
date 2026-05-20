@@ -347,8 +347,7 @@ function TemplatesPage() {
   const saveBindings = useServerFn(setTemplateBindings);
   const deleteTpl = useServerFn(deleteTemplate);
   const preparePublish = useServerFn(prepareTemplatePublish);
-  const uploadRendered = useServerFn(publishRenderedTemplate);
-  const uploadRenderedVideo = useServerFn(publishRenderedVideoTemplate);
+  const recordPublish = useServerFn(recordTemplatePublish);
   const fetchPublishStatus = useServerFn(listTemplatesWithPublishStatus);
 
   const itemsQ = useQuery({ queryKey: ["square-items"], queryFn: () => fetchItems() });
