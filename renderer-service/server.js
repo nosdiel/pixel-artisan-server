@@ -411,18 +411,19 @@ app.post("/upload-video", authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: e.message });
     }
 
-    const ext = mimeType === "video/mp4" ? "mp4" : "webm";
+    const finalMimeType = "video/mp4";
+    const finalBuffer = await transcodeVideoToMp4(buffer, mimeType);
     await docRef.set(
       { companyId, templateId, name: name || null, status: "uploading", startedAt },
       { merge: true },
     );
 
     const ts = startedAt.toISOString().replace(/[:.]/g, "-");
-    const latestPath = `rendered/${companyId}/${templateId}/latest.${ext}`;
-    const versionPath = `rendered/${companyId}/${templateId}/${ts}.${ext}`;
+    const latestPath = `rendered/${companyId}/${templateId}/latest.mp4`;
+    const versionPath = `rendered/${companyId}/${templateId}/${ts}.mp4`;
 
-    const latestUrl = await uploadVideoBuffer(buffer, latestPath, mimeType);
-    const versionUrl = await uploadVideoBuffer(buffer, versionPath, mimeType);
+    const latestUrl = await uploadVideoBuffer(finalBuffer, latestPath, finalMimeType);
+    const versionUrl = await uploadVideoBuffer(finalBuffer, versionPath, finalMimeType);
 
     await docRef.set(
       {
@@ -434,11 +435,13 @@ app.post("/upload-video", authMiddleware, async (req, res) => {
         latestPath,
         versionPath,
         versionUrl,
-        mimeType,
+        mimeType: finalMimeType,
+        sourceMimeType: mimeType,
         width: width ?? null,
         height: height ?? null,
         durationMs: durationMs ?? null,
-        bytes: buffer.length,
+        originalBytes: buffer.length,
+        bytes: finalBuffer.length,
         renderedAt: new Date(),
       },
       { merge: true },
