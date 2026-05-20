@@ -123,6 +123,7 @@ export const Route = createFileRoute("/editor")({
   ssr: false,
   validateSearch: (s: Record<string, unknown>) => ({
     template: typeof s.template === "string" ? s.template : undefined,
+    templateId: typeof s.templateId === "string" ? s.templateId : undefined,
     image: typeof s.image === "string" ? s.image : undefined,
     companyId: typeof s.companyId === "string" ? s.companyId : undefined,
     returnUrl: typeof s.returnUrl === "string" ? s.returnUrl : undefined,
@@ -130,7 +131,8 @@ export const Route = createFileRoute("/editor")({
 });
 
 function EditorPage() {
-  const { template: templateIdParam, image: imageIdParam, companyId: companyIdParam, returnUrl: returnUrlParam } = Route.useSearch();
+  const { template, templateId: legacyTemplateId, image: imageIdParam, returnUrl: returnUrlParam } = Route.useSearch();
+  const templateIdParam = template ?? legacyTemplateId;
   const params = new URLSearchParams(window.location.search);
   const externalCompanyId = params.get("companyId") || undefined;
   // External-launch mode (Nini Signage Renderer): bypass Supabase auth and
