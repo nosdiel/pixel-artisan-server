@@ -29,10 +29,10 @@ import {
 } from "@/lib/square.functions";
 import {
   prepareTemplatePublish,
-  publishRenderedTemplate,
-  publishRenderedVideoTemplate,
   listTemplatesWithPublishStatus,
+  recordTemplatePublish,
 } from "@/lib/signage.functions";
+import { uploadEditedMediaToFirebase } from "@/integrations/firebase/media";
 
 export const Route = createFileRoute("/_authenticated/templates")({ component: TemplatesPage });
 
