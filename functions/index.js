@@ -83,6 +83,16 @@ async function getSignedUrl(file) {
   return url;
 }
 
+function createFirebaseDownloadToken() {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : crypto.randomBytes(16).toString("hex");
+}
+
+function getFirebaseDownloadUrl(storagePath, token) {
+  return `https://firebasestorage.googleapis.com/v0/b/${BUCKET_NAME}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+}
+
 function ffprobe(file) {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(file, (err, data) => (err ? reject(err) : resolve(data)));
@@ -245,6 +255,7 @@ async function processVideo({ file, contentType }) {
   // stale duplicate.
   const finalStoragePath = file.name.replace(/\.[^./]+$/, "") + ".mp4";
   const FINAL_CONTENT_TYPE = "video/mp4";
+  const firebaseDownloadToken = createFirebaseDownloadToken();
 
   await bucket.upload(localOut, {
     destination: finalStoragePath,
@@ -254,14 +265,24 @@ async function processVideo({ file, contentType }) {
       contentType: FINAL_CONTENT_TYPE,
       contentDisposition: `inline; filename="${path.basename(finalStoragePath)}"`,
       cacheControl: "public, max-age=3600",
-      metadata: { processed: "true" },
+      metadata: {
+        processed: "true",
+        firebaseStorageDownloadTokens: firebaseDownloadToken,
+      },
     },
   });
   const replaced = bucket.file(finalStoragePath);
 
   // Ensure stored metadata.contentType is exactly video/mp4 (some upload
   // paths in GCS preserve the originating header otherwise).
-  await replaced.setMetadata({ contentType: FINAL_CONTENT_TYPE });
+  await replaced.setMetadata({
+    contentType: FINAL_CONTENT_TYPE,
+    contentDisposition: `inline; filename="${path.basename(finalStoragePath)}"`,
+    metadata: {
+      processed: "true",
+      firebaseStorageDownloadTokens: firebaseDownloadToken,
+    },
+  });
 
   const [meta] = await replaced.getMetadata();
   const size = Number(meta.size) || compressedSize || null;
@@ -291,8 +312,9 @@ async function processVideo({ file, contentType }) {
     }
   }
 
-  const url = await getSignedUrl(replaced);
-  logger.info("video: signed url generated", { path: finalStoragePath, url });
+  const signedUrl = await getSignedUrl(replaced);
+  const url = getFirebaseDownloadUrl(finalStoragePath, firebaseDownloadToken);
+  logger.info("video: signed url generated", { path: finalStoragePath, signedUrl, firebaseDownloadUrl: url });
 
   // Upload thumbnail to thumbnails/<same-path>.jpg
   const thumbStoragePath = `thumbnails/${finalStoragePath.replace(/\.[^./]+$/, "")}.jpg`;
