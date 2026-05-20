@@ -8,13 +8,17 @@
 const express = require("express");
 const admin = require("firebase-admin");
 const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
 const zlib = require("zlib");
+const os = require("os");
+const crypto = require("crypto");
+const { spawn } = require("child_process");
 
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET;
-const RENDERER_VERSION = "2026-05-16-video-upload";
+const RENDERER_VERSION = "2026-05-20-video-ffmpeg-mp4";
 
 if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   console.error("FIREBASE_SERVICE_ACCOUNT_JSON env var is required");
@@ -33,6 +37,14 @@ admin.initializeApp({
 
 const bucket = admin.storage().bucket();
 const firestore = admin.firestore();
+
+function createFirebaseDownloadToken() {
+  return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+}
+
+function getFirebaseDownloadUrl(storagePath, token) {
+  return `https://firebasestorage.googleapis.com/v0/b/${BUCKET_NAME}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+}
 
 function authMiddleware(req, res, next) {
   if (!AUTH_TOKEN) return next();
@@ -280,16 +292,97 @@ function decodeVideoPayload(input, mimeType) {
 
 async function uploadVideoBuffer(buffer, storagePath, mimeType) {
   const file = bucket.file(storagePath);
+  const token = createFirebaseDownloadToken();
   await file.save(buffer, {
     contentType: mimeType,
     resumable: false,
-    metadata: { cacheControl: "public, max-age=60" },
+    metadata: {
+      contentDisposition: `inline; filename="${path.basename(storagePath)}"`,
+      cacheControl: "public, max-age=60",
+      metadata: { firebaseStorageDownloadTokens: token },
+    },
   });
-  const [url] = await file.getSignedUrl({
-    action: "read",
-    expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+  await file.setMetadata({
+    contentType: mimeType,
+    contentDisposition: `inline; filename="${path.basename(storagePath)}"`,
+    metadata: { firebaseStorageDownloadTokens: token },
   });
+  const [meta] = await file.getMetadata();
+  console.log("[upload-video] storage metadata", {
+    storagePath,
+    contentType: meta.contentType,
+    size: meta.size,
+  });
+  if (meta.contentType !== mimeType) {
+    throw new Error(`Storage metadata contentType mismatch: expected ${mimeType}, got ${meta.contentType}`);
+  }
+  const url = getFirebaseDownloadUrl(storagePath, token);
+  console.log("[upload-video] signed URL generated", { storagePath, url });
   return url;
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 12000) stderr = stderr.slice(-12000);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-2000)}`));
+    });
+  });
+}
+
+async function transcodeVideoToMp4(buffer, inputMimeType) {
+  const inputExt = inputMimeType === "video/webm" ? ".webm" : ".mp4";
+  const id = crypto.randomBytes(8).toString("hex");
+  const inputPath = path.join(os.tmpdir(), `upload-${id}${inputExt}`);
+  const outputPath = path.join(os.tmpdir(), `upload-${id}.mp4`);
+  await fsp.writeFile(inputPath, buffer);
+  try {
+    console.log("[upload-video] ffmpeg start", { inputMimeType, originalSize: buffer.length });
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inputPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a?",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "23",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-movflags",
+      "+faststart",
+      outputPath,
+    ]);
+    const output = await fsp.readFile(outputPath);
+    console.log("[upload-video] ffmpeg success", {
+      originalSize: buffer.length,
+      compressedSize: output.length,
+      contentType: "video/mp4",
+    });
+    return output;
+  } catch (err) {
+    console.error("[upload-video] ffmpeg error", err);
+    throw err;
+  } finally {
+    await fsp.unlink(inputPath).catch(() => {});
+    await fsp.unlink(outputPath).catch(() => {});
+  }
 }
 
 app.post("/upload-video", authMiddleware, async (req, res) => {
@@ -318,18 +411,19 @@ app.post("/upload-video", authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: e.message });
     }
 
-    const ext = mimeType === "video/mp4" ? "mp4" : "webm";
+    const finalMimeType = "video/mp4";
+    const finalBuffer = await transcodeVideoToMp4(buffer, mimeType);
     await docRef.set(
       { companyId, templateId, name: name || null, status: "uploading", startedAt },
       { merge: true },
     );
 
     const ts = startedAt.toISOString().replace(/[:.]/g, "-");
-    const latestPath = `rendered/${companyId}/${templateId}/latest.${ext}`;
-    const versionPath = `rendered/${companyId}/${templateId}/${ts}.${ext}`;
+    const latestPath = `rendered/${companyId}/${templateId}/latest.mp4`;
+    const versionPath = `rendered/${companyId}/${templateId}/${ts}.mp4`;
 
-    const latestUrl = await uploadVideoBuffer(buffer, latestPath, mimeType);
-    const versionUrl = await uploadVideoBuffer(buffer, versionPath, mimeType);
+    const latestUrl = await uploadVideoBuffer(finalBuffer, latestPath, finalMimeType);
+    const versionUrl = await uploadVideoBuffer(finalBuffer, versionPath, finalMimeType);
 
     await docRef.set(
       {
@@ -341,11 +435,13 @@ app.post("/upload-video", authMiddleware, async (req, res) => {
         latestPath,
         versionPath,
         versionUrl,
-        mimeType,
+        mimeType: finalMimeType,
+        sourceMimeType: mimeType,
         width: width ?? null,
         height: height ?? null,
         durationMs: durationMs ?? null,
-        bytes: buffer.length,
+        originalBytes: buffer.length,
+        bytes: finalBuffer.length,
         renderedAt: new Date(),
       },
       { merge: true },
