@@ -161,9 +161,9 @@ function EditorPage() {
   const navigate = useNavigate();
 
   const resolveOwnerId = useCallback(async () => {
+    if (externalCompanyId) return externalCompanyId;
     const { data: ud } = await supabase.auth.getUser();
-    const ownerId = ud.user?.id || externalCompanyId;
-    return ownerId;
+    return ud.user?.id;
   }, [externalCompanyId]);
 
   const getFitZoom = useCallback((presetKey = preset) => {
