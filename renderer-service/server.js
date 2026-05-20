@@ -8,8 +8,12 @@
 const express = require("express");
 const admin = require("firebase-admin");
 const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
 const zlib = require("zlib");
+const os = require("os");
+const crypto = require("crypto");
+const { spawn } = require("child_process");
 
 const PORT = process.env.PORT || 8080;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
@@ -33,6 +37,14 @@ admin.initializeApp({
 
 const bucket = admin.storage().bucket();
 const firestore = admin.firestore();
+
+function createFirebaseDownloadToken() {
+  return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+}
+
+function getFirebaseDownloadUrl(storagePath, token) {
+  return `https://firebasestorage.googleapis.com/v0/b/${BUCKET_NAME}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+}
 
 function authMiddleware(req, res, next) {
   if (!AUTH_TOKEN) return next();
