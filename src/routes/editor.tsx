@@ -428,9 +428,14 @@ function EditorPage() {
   // Layer Firebase-sourced Square catalog on top of the Supabase cache.
   // When Firebase items load, they replace the cache entries. Editor stays
   // usable when Firebase is unconfigured or offline (hook returns []).
-  const { items: firebaseItems } = useSquareCatalog();
-  const { state: squareSyncState } = useSquareSyncState();
-  const { trigger: triggerSquareSync, running: squareSyncRunning } = useTriggerSquareSync();
+  // In external-launch mode, Square data is scoped to the customer's
+  // `companies/{companyId}` doc (squareMenuUrl, square_items subcollection,
+  // company-scoped sync state). Outside external mode the hooks fall back
+  // to the legacy global Firestore paths.
+  const squareScopeCompanyId = externalMode ? companyIdParam ?? null : null;
+  const { items: firebaseItems } = useSquareCatalog(squareScopeCompanyId);
+  const { state: squareSyncState } = useSquareSyncState(squareScopeCompanyId);
+  const { trigger: triggerSquareSync, running: squareSyncRunning } = useTriggerSquareSync(squareScopeCompanyId);
   useEffect(() => {
     if (!firebaseItems || firebaseItems.length === 0) return;
     const mapped: SquareCacheItem[] = firebaseItems.map((it) => {
