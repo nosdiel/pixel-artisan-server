@@ -684,6 +684,19 @@ function EditorPage() {
     const file = e.target.files?.[0]; if (!file) return;
     const tId = toast.loading("Uploading image…");
     try {
+      if (externalMode) {
+        const res = await uploadCompanyMedia({
+          companyId: companyIdParam!,
+          templateId: templateIdParam!,
+          kind: "image",
+          blob: file,
+          contentType: file.type || "image/png",
+          name: file.name,
+        });
+        toast.dismiss(tId);
+        await addImageFromUrl(res.url, res.path);
+        return;
+      }
       const res = await uploadEditedMediaToFirebase({
         kind: "image",
         blob: file,
@@ -776,6 +789,25 @@ function EditorPage() {
   const handleEditedVideoSave = async (result: EditedVideoResult) => {
     const tId = toast.loading("Uploading edited video to Firebase…");
     try {
+      if (externalMode) {
+        const res = await uploadCompanyMedia({
+          companyId: companyIdParam!,
+          templateId: templateIdParam!,
+          kind: "video",
+          blob: result.videoBlob,
+          contentType: result.videoMime || "video/mp4",
+          thumbnailBlob: result.thumbnailBlob,
+          thumbnailContentType: "image/jpeg",
+          width: result.width ?? null,
+          height: result.height ?? null,
+          durationSeconds: result.durationSeconds ?? null,
+          name: pendingVideoFile?.name,
+        });
+        toast.success("Video ready", { id: tId });
+        try { await addVideoFromUrl(res.url, res.path); }
+        catch (err) { toast.error(err instanceof Error ? err.message : "Could not place video"); }
+        return;
+      }
       const res = await uploadEditedMediaToFirebase({
         kind: "video",
         blob: result.videoBlob,
