@@ -104,7 +104,8 @@ function blobToBase64(blob: Blob): Promise<string> {
 
 const VIDEO_RECORDING_FPS = 30;
 const VIDEO_RECORDING_MIN_SECONDS = 10;
-const VIDEO_RECORDING_BITRATE = 3_000_000;
+const VIDEO_RECORDING_MAX_SECONDS = 20;
+const VIDEO_RECORDING_BITRATE = 2_000_000;
 
 type VideoLayer = {
   video: HTMLVideoElement;
@@ -114,11 +115,14 @@ type VideoLayer = {
 
 function pickRecorderMimeType() {
   const candidates = [
-    "video/mp4;codecs=avc1",
-    "video/mp4",
+    // Canvas MediaRecorder MP4 is still unreliable in some browsers and has
+    // produced white-frame recordings. Prefer WebM from the browser, then the
+    // renderer service transcodes the final Storage file to playable H.264 MP4.
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
+    "video/mp4;codecs=avc1",
+    "video/mp4",
   ];
   return candidates.find(
     (m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
@@ -553,7 +557,10 @@ function TemplatesPage() {
       const longestSource = hasPlayableDuration
         ? Math.max(...durations.filter((d) => Number.isFinite(d) && d > 0))
         : VIDEO_RECORDING_MIN_SECONDS;
-      const maxDur = Math.max(VIDEO_RECORDING_MIN_SECONDS, longestSource);
+      const maxDur = Math.min(
+        VIDEO_RECORDING_MAX_SECONDS,
+        Math.max(VIDEO_RECORDING_MIN_SECONDS, longestSource),
+      );
 
       const stream = (canvasEl as HTMLCanvasElement).captureStream(VIDEO_RECORDING_FPS);
       const canvasTrack = stream.getVideoTracks()[0] as MediaStreamTrack & {
