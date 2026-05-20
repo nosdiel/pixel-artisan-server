@@ -602,8 +602,7 @@ function EditorPage() {
     }
   };
   const loadCustomFonts = async () => {
-    const { data: ud } = await supabase.auth.getUser();
-    const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+    const ownerId = await resolveOwnerId();
     if (!ownerId) return;
     const { data } = await supabase.storage.from("fonts").list(ownerId, { limit: 100 });
     if (!data) return;
@@ -620,8 +619,7 @@ function EditorPage() {
     if (!ok) { toast.error("Use .otf, .ttf, .woff or .woff2"); return; }
     setUploadingFont(true);
     try {
-      const { data: ud } = await supabase.auth.getUser();
-      const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+      const ownerId = await resolveOwnerId();
       if (!ownerId) { toast.error("Sign in required"); return; }
       const safe = file.name.replace(/[^\w.\-]+/g, "_");
       const path = `${ownerId}/${safe}`;
@@ -640,8 +638,7 @@ function EditorPage() {
   };
 
   const loadAssets = async () => {
-    const { data: ud } = await supabase.auth.getUser();
-    const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+    const ownerId = await resolveOwnerId();
     if (!ownerId) return;
     const { data } = await supabase.from("images").select("id, title, variants").eq("user_id", ownerId).order("created_at", { ascending: false }).limit(50);
     if (!data) return;
