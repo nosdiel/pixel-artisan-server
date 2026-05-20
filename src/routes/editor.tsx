@@ -595,11 +595,12 @@ function EditorPage() {
   };
   const loadCustomFonts = async () => {
     const { data: ud } = await supabase.auth.getUser();
-    if (!ud.user) return;
-    const { data } = await supabase.storage.from("fonts").list(ud.user.id, { limit: 100 });
+    const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+    if (!ownerId) return;
+    const { data } = await supabase.storage.from("fonts").list(ownerId, { limit: 100 });
     if (!data) return;
     for (const f of data) {
-      const path = `${ud.user.id}/${f.name}`;
+      const path = `${ownerId}/${f.name}`;
       const { data: signed } = await supabase.storage.from("fonts").createSignedUrl(path, 3600);
       if (!signed?.signedUrl) continue;
       const family = f.name.replace(/\.(otf|ttf|woff2?|woff)$/i, "");
@@ -612,9 +613,10 @@ function EditorPage() {
     setUploadingFont(true);
     try {
       const { data: ud } = await supabase.auth.getUser();
-      if (!ud.user) { toast.error("Sign in required"); return; }
+      const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+      if (!ownerId) { toast.error("Sign in required"); return; }
       const safe = file.name.replace(/[^\w.\-]+/g, "_");
-      const path = `${ud.user.id}/${safe}`;
+      const path = `${ownerId}/${safe}`;
       const { error } = await supabase.storage.from("fonts").upload(path, file, { upsert: true, contentType: file.type || "font/otf" });
       if (error) throw error;
       const { data: signed } = await supabase.storage.from("fonts").createSignedUrl(path, 3600);
@@ -631,8 +633,9 @@ function EditorPage() {
 
   const loadAssets = async () => {
     const { data: ud } = await supabase.auth.getUser();
-    if (!ud.user) return;
-    const { data } = await supabase.from("images").select("id, title, variants").eq("user_id", ud.user.id).order("created_at", { ascending: false }).limit(50);
+    const ownerId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+    if (!ownerId) return;
+    const { data } = await supabase.from("images").select("id, title, variants").eq("user_id", ownerId).order("created_at", { ascending: false }).limit(50);
     if (!data) return;
     const out: Asset[] = [];
     for (const row of data) {
@@ -971,7 +974,8 @@ function EditorPage() {
       }
 
       const { data: ud } = await supabase.auth.getUser();
-      const userId = ud.user!.id;
+      const userId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
+      if (!userId) { toast.error("Sign in required"); return; }
 
       // Persist editable template (insert or update)
       let savedTemplateId = templateId;
