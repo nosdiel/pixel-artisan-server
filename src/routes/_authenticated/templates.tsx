@@ -506,7 +506,7 @@ function TemplatesPage() {
             imageObject.setElement?.(v);
             imageObject.objectCaching = false;
             videos.push(v);
-            videoLayers.push({ video: v, json: j });
+            videoLayers.push({ video: v, json: j, fabricObject: fabricObj });
           }
 
           const childJson = j?.objects ?? j?._objects ?? [];
