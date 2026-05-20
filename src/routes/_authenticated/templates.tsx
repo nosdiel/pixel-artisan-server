@@ -109,6 +109,7 @@ const VIDEO_RECORDING_BITRATE = 3_000_000;
 type VideoLayer = {
   video: HTMLVideoElement;
   json: FabricCanvasObject;
+  fabricObject: unknown;
 };
 
 function pickRecorderMimeType() {
@@ -505,7 +506,7 @@ function TemplatesPage() {
             imageObject.setElement?.(v);
             imageObject.objectCaching = false;
             videos.push(v);
-            videoLayers.push({ video: v, json: j });
+            videoLayers.push({ video: v, json: j, fabricObject: fabricObj });
           }
 
           const childJson = j?.objects ?? j?._objects ?? [];
@@ -565,8 +566,43 @@ function TemplatesPage() {
       // canvas frames when the browser exposes CanvasCaptureMediaStreamTrack.
       const ctx = canvasEl.getContext("2d");
       if (!ctx) throw new Error("Could not create video recording canvas context");
+      // Build a list of non-video fabric objects. Fabric's FabricImage does
+      // not reliably re-draw an HTMLVideoElement frame-by-frame on a
+      // StaticCanvas, so we draw video frames ourselves on the raw 2d ctx
+      // and let fabric render only the overlays (text/shapes/etc.) on top.
+      const videoFabricObjects = new Set(videoLayers.map((l) => l.fabricObject));
+      const allFabricObjects = staticCanvas.getObjects();
+      const overlayObjects = allFabricObjects.filter((o) => !videoFabricObjects.has(o));
+      const bgColor =
+        (prep.canvasJson as { background?: string }).background ??
+        ((staticCanvas as unknown as { backgroundColor?: string }).backgroundColor as
+          | string
+          | undefined);
+      const staticCanvasInternal = staticCanvas as unknown as {
+        _renderObjects?: (ctx: CanvasRenderingContext2D, objects: unknown[]) => void;
+      };
       const renderFrame = () => {
-        staticCanvas.renderAll();
+        // 1. Clear + background fill
+        ctx.clearRect(0, 0, prep.width, prep.height);
+        if (typeof bgColor === "string" && bgColor) {
+          ctx.fillStyle = bgColor;
+          ctx.fillRect(0, 0, prep.width, prep.height);
+        }
+        // 2. Draw each video layer (current frame) honoring its transform.
+        for (const layer of videoLayers) {
+          try {
+            drawVideoLayer(ctx, layer);
+          } catch {
+            // Skip a single bad frame rather than aborting the whole record.
+          }
+        }
+        // 3. Render fabric overlays on top WITHOUT clearing the ctx first.
+        if (typeof staticCanvasInternal._renderObjects === "function") {
+          staticCanvasInternal._renderObjects(ctx, overlayObjects);
+        } else {
+          // Fallback: full fabric render (will clear); overlays only.
+          staticCanvas.renderAll();
+        }
         requestCanvasFrame?.();
       };
       const tick = () => {
