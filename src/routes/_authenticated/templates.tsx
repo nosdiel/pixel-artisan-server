@@ -701,17 +701,28 @@ function TemplatesPage() {
       toast.success(
         `Local video preview verified (${clampedDurationSeconds.toFixed(1)}s, ${Math.round(uploadBlob.size / 1024)} KB)`,
       );
-      const base64 = await blobToBase64(uploadBlob);
-      return await uploadRenderedVideo({
-        data: {
-          templateId,
-          videoBase64: base64,
-          mimeType: mimeOut,
+      try {
+        const media = await uploadEditedMediaToFirebase({
+          kind: "video",
+          blob: uploadBlob,
+          contentType: mimeOut,
           width: prep.width,
           height: prep.height,
-          durationMs: Math.round(clampedDurationSeconds * 1000),
-        },
-      });
+          durationSeconds: clampedDurationSeconds,
+          name: `${prep.name ?? "template"} (${templateId})`,
+        });
+        console.log("[publish] uploaded video to Firebase", media);
+        await recordPublish({
+          data: { templateId, status: "success", downloadUrl: media.url },
+        });
+        return { ok: true as const, downloadUrl: media.url, media };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        await recordPublish({
+          data: { templateId, status: "error", error: message },
+        }).catch(() => {});
+        throw e;
+      }
     } finally {
       if (rafId != null) cancelAnimationFrame(rafId);
       try {
