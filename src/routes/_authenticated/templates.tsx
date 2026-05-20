@@ -245,7 +245,11 @@ async function resolveVideoDuration(video: HTMLVideoElement, fallbackSeconds: nu
 }
 
 async function verifyRecordedVideoBlob(blob: Blob, expectedSeconds: number) {
-  const minBytes = Math.max(600_000, Math.round(expectedSeconds * 60_000));
+  // Sanity check: a valid encoded clip is at least ~50 KB total and roughly
+  // 8 KB/s (~64 kbps) — well under any realistic encoder output. We only
+  // want to catch empty/aborted recordings, not reject legitimately small
+  // but well-compressed videos.
+  const minBytes = Math.max(50_000, Math.round(expectedSeconds * 8_000));
   if (blob.size < minBytes) {
     throw new Error(
       `Recorded video is too small (${Math.round(blob.size / 1024)} KB). Refusing to upload an invalid render.`,
