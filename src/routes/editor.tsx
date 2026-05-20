@@ -978,14 +978,13 @@ function EditorPage() {
         return;
       }
 
-      const { data: ud } = await supabase.auth.getUser();
-      const userId = ud.user?.id || (externalMode ? companyIdParam ?? undefined : undefined);
-      if (!userId) { toast.error("Sign in required"); return; }
+      const ownerId = await resolveOwnerId();
+      if (!ownerId) { toast.error("Sign in required"); return; }
 
       // Persist editable template (insert or update)
       let savedTemplateId = templateId;
       const tplPayload = {
-        user_id: userId,
+        user_id: ownerId,
         name: title,
         preset,
         width: w,
@@ -1010,19 +1009,19 @@ function EditorPage() {
       }
 
       const { data: existingImage } = imageIdParam
-        ? await supabase.from("images").select("id, slug").eq("user_id", userId).eq("id", imageIdParam).maybeSingle()
+        ? await supabase.from("images").select("id, slug").eq("user_id", ownerId).eq("id", imageIdParam).maybeSingle()
         : savedTemplateId
           ? await supabase
               .from("images")
               .select("id, slug")
-              .eq("user_id", userId)
+              .eq("user_id", ownerId)
               .eq("template_id", savedTemplateId)
               .order("created_at", { ascending: false })
               .limit(1)
               .maybeSingle()
           : { data: null };
       const slug = existingImage?.slug ?? nanoid(10);
-      const baseFolder = `${userId}/${slug}`;
+      const baseFolder = `${ownerId}/${slug}`;
       const variantRecords: { format: string; path: string; size: number; quality: number }[] = [];
       for (const v of variants) {
         const path = `${baseFolder}/image.${v.format === "jpeg" ? "jpg" : v.format}`;
@@ -1033,7 +1032,7 @@ function EditorPage() {
       variantRecords.sort((x, y) => x.size - y.size);
 
       const imagePayload = {
-        user_id: userId, slug, title, width: imageWidth, height: imageHeight,
+        user_id: ownerId, slug, title, width: imageWidth, height: imageHeight,
         original_size_bytes: originalSize, optimized_size_bytes: best.size,
         variants: variantRecords, preset, source: "editor",
         template_id: savedTemplateId,
