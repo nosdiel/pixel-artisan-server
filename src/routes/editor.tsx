@@ -1869,8 +1869,22 @@ function EditorPage() {
             {a && fabric && (
               <AnimationPanel
                 object={a}
+                isImage={isImage}
                 onChange={() => { pushHistory(); refresh(); }}
                 onPreview={() => { const fc = fcRef.current; if (fc) playObjectAnimation(fc, a as any, fabric); }}
+                onStopSlideshow={() => { stopSlideshow(a as any); fcRef.current?.requestRenderAll(); }}
+                onAddSlideshowFrame={async (file) => {
+                  const r = await uploadImageFile(file);
+                  if (!r) return;
+                  const arr: SlideshowFrame[] = Array.isArray((a as any).slideshowImages) ? (a as any).slideshowImages : [];
+                  (a as any).slideshowImages = [...arr, { url: r.url, path: r.path }];
+                  pushHistory(); refresh();
+                }}
+                onRemoveSlideshowFrame={(idx) => {
+                  const arr: SlideshowFrame[] = Array.isArray((a as any).slideshowImages) ? (a as any).slideshowImages : [];
+                  (a as any).slideshowImages = arr.filter((_, i) => i !== idx);
+                  pushHistory(); refresh();
+                }}
               />
             )}
 
