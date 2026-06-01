@@ -380,13 +380,52 @@ async function processStoragePath({ storagePath, mediaDocId, contentTypeHint }) 
     filePath: storagePath,
   });
 
+  // Resolve companyId / companyMediaId. Priority:
+  //   1. Storage object customMetadata (set by uploadEditedMediaToFirebase)
+  //   2. Top-level media/{docId} document fields (set by the web client
+  //      right after upload, before this trigger fires)
+  const customMeta = meta.metadata || {};
+  let companyId = customMeta.companyId || null;
+  let companyMediaId = customMeta.companyMediaId || null;
+
+  // Images: if no separate thumbnail is produced, mirror the processed
+  // image URL into thumbnail fields so the Android player always has one.
+  const fieldsForCompanyDoc = { ...result.fields };
+  if (result.kind === "image") {
+    fieldsForCompanyDoc.thumbnailURL = result.fields.url;
+    fieldsForCompanyDoc.thumbnailPath = result.fields.path;
+  }
+
   if (docId) {
+    if (!companyId || !companyMediaId) {
+      try {
+        const snap = await firestore.collection(FIRESTORE_COLLECTION).doc(docId).get();
+        const data = snap.exists ? snap.data() || {} : {};
+        if (!companyId && typeof data.companyId === "string") companyId = data.companyId;
+        if (!companyMediaId && typeof data.companyMediaId === "string") companyMediaId = data.companyMediaId;
+      } catch (err) {
+        logger.warn("processStoragePath: failed to read media doc for companyId", {
+          docId,
+          error: String(err),
+        });
+      }
+    }
+
     await firestore
       .collection(FIRESTORE_COLLECTION)
       .doc(docId)
       .set(
         {
           ...result.fields,
+          ...(result.kind === "image"
+            ? {
+                thumbnailURL: result.fields.url,
+                thumbnailPath: result.fields.path,
+              }
+            : {}),
+          state: "ready",
+          status: "ready",
+          processed: true,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           processedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
@@ -398,7 +437,55 @@ async function processStoragePath({ storagePath, mediaDocId, contentTypeHint }) 
     });
   }
 
-  return { success: true, kind: result.kind, mediaDocId: docId, ...result.fields };
+  // Mirror to companies/{companyId}/media/{companyMediaId} — this is the
+  // document the Android signage player reads from. It must always end up
+  // with the final compressed URL and (for videos) the thumbnail URL.
+  if (companyId && companyMediaId) {
+    try {
+      await firestore
+        .collection("companies")
+        .doc(companyId)
+        .collection("media")
+        .doc(companyMediaId)
+        .set(
+          {
+            id: companyMediaId,
+            ...fieldsForCompanyDoc,
+            state: "ready",
+            status: "ready",
+            processed: true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            processedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      logger.info("Mirrored processed media to company doc", {
+        companyId,
+        companyMediaId,
+        kind: result.kind,
+      });
+    } catch (err) {
+      logger.error("Failed to mirror processed media to company doc", {
+        companyId,
+        companyMediaId,
+        error: String(err),
+      });
+    }
+  } else {
+    logger.info("No companyId/companyMediaId resolved; skipping company mirror", {
+      storagePath,
+      docId,
+    });
+  }
+
+  return {
+    success: true,
+    kind: result.kind,
+    mediaDocId: docId,
+    companyId,
+    companyMediaId,
+    ...result.fields,
+  };
 }
 
 // ---------- HTTPS endpoint ----------
