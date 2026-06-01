@@ -18,6 +18,7 @@ type MediaEditorSearch = {
   companyId: string;
   templateId: string;
   mediaDocId?: string;
+  companyMediaId?: string;
   returnUrl?: string;
 };
 
@@ -26,6 +27,14 @@ export const Route = createFileRoute("/media-editor")({
     companyId: typeof raw.companyId === "string" ? raw.companyId : "",
     templateId: typeof raw.templateId === "string" ? raw.templateId : "",
     mediaDocId: typeof raw.mediaDocId === "string" ? raw.mediaDocId : undefined,
+    companyMediaId:
+      typeof raw.companyMediaId === "string"
+        ? raw.companyMediaId
+        : typeof raw.mediaId === "string"
+          ? raw.mediaId
+          : typeof raw.mediaDocId === "string"
+            ? raw.mediaDocId
+            : undefined,
     returnUrl: typeof raw.returnUrl === "string" ? raw.returnUrl : undefined,
   }),
   component: MediaEditorPage,
@@ -76,7 +85,7 @@ async function captureImageThumb(blob: Blob, maxDim = 480): Promise<Blob | null>
 }
 
 function MediaEditorPage() {
-  const { companyId, templateId, mediaDocId, returnUrl } = Route.useSearch();
+  const { companyId, templateId, mediaDocId, companyMediaId, returnUrl } = Route.useSearch();
   const initError = getFirebaseInitError();
 
   const [file, setFile] = useState<File | null>(null);
@@ -168,7 +177,7 @@ function MediaEditorPage() {
           durationSeconds: v.durationSeconds,
           name: file.name,
           companyId: companyId || null,
-          companyMediaId: mediaDocId || undefined,
+          companyMediaId: companyMediaId || undefined,
         };
       } else {
         const dims = await captureImageDims(file);
@@ -183,9 +192,11 @@ function MediaEditorPage() {
           height: dims.height,
           name: file.name,
           companyId: companyId || null,
-          companyMediaId: mediaDocId || undefined,
+          companyMediaId: companyMediaId || undefined,
         };
       }
+
+      console.log("[media-editor] uploadEditedMediaToFirebase input", uploadInput);
 
       const uploaded = await uploadEditedMediaToFirebase(uploadInput);
       console.log("[media-editor] uploaded", uploaded);
@@ -214,16 +225,18 @@ function MediaEditorPage() {
           const fb = getFirebase();
           if (fb) {
             await ensureFirebaseAuth();
+            const targetCompanyMediaId = uploaded.companyMediaId || uploaded.mediaDocId;
             const companyMediaRef = doc(
               fb.db,
               "companies",
               companyId,
               "media",
-              uploaded.mediaDocId,
+              targetCompanyMediaId,
             );
             await setDoc(
               companyMediaRef,
               {
+                id: targetCompanyMediaId,
                 mediaDocId: uploaded.mediaDocId,
                 url: finalUrl,
                 path: finalRes.path,
@@ -273,7 +286,7 @@ function MediaEditorPage() {
             <p className="text-xs text-muted-foreground">
               {companyId ? <>Company <span className="font-mono">{companyId}</span> · </> : null}
               {templateId ? <>Template <span className="font-mono">{templateId}</span></> : <>Standalone</>}
-              {mediaDocId ? <> · Media <span className="font-mono">{mediaDocId}</span></> : null}
+              {companyMediaId ? <> · Media <span className="font-mono">{companyMediaId}</span></> : null}
             </p>
           </div>
           {canReturn && result ? (
