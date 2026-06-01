@@ -82,6 +82,149 @@ function extractStoragePath(src: string) {
 const TRANSPARENT_VIDEO_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 const VIDEO_STORAGE_EXT_RE = /\.(mp4|mov|m4v|webm|ogg|ogv)(?:$|[?#])/i;
 
+// Persisted animation presets. Stored on each fabric object as `animation`
+// so the renderer (or a future preview) can replay them.
+type AnimationType =
+  | "none"
+  | "fade"
+  | "slide-left"
+  | "slide-right"
+  | "slide-up"
+  | "slide-down"
+  | "zoom-in"
+  | "zoom-out"
+  | "spin"
+  | "pulse"
+  | "bounce";
+type ObjectAnimation = { type: AnimationType; duration: number; delay: number; loop: boolean };
+const ANIMATION_OPTIONS: { value: AnimationType; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "fade", label: "Fade in" },
+  { value: "slide-left", label: "Slide from left" },
+  { value: "slide-right", label: "Slide from right" },
+  { value: "slide-up", label: "Slide from top" },
+  { value: "slide-down", label: "Slide from bottom" },
+  { value: "zoom-in", label: "Zoom in" },
+  { value: "zoom-out", label: "Zoom out" },
+  { value: "spin", label: "Spin" },
+  { value: "pulse", label: "Pulse" },
+  { value: "bounce", label: "Bounce in" },
+];
+
+function playObjectAnimation(
+  fc: Fabric.Canvas,
+  obj: any,
+  fabric: FabricModule,
+) {
+  const anim = obj.animation as ObjectAnimation | undefined;
+  if (!anim || anim.type === "none") return;
+  const dur = Math.max(50, (anim.duration ?? 1) * 1000);
+  const delay = Math.max(0, (anim.delay ?? 0) * 1000);
+  const orig = {
+    left: obj.left ?? 0,
+    top: obj.top ?? 0,
+    opacity: obj.opacity ?? 1,
+    scaleX: obj.scaleX ?? 1,
+    scaleY: obj.scaleY ?? 1,
+    angle: obj.angle ?? 0,
+  };
+  const cw = (fc as any).getWidth() / fc.getZoom();
+  const ch = (fc as any).getHeight() / fc.getZoom();
+  const ease = (fabric as any).util?.ease ?? {};
+  const render = () => fc.requestRenderAll();
+
+  const runOnce = (after?: () => void) => {
+    const tween = (opts: any) => (fabric as any).util.animate({ ...opts, onComplete: () => { opts.onComplete?.(); after?.(); } });
+    switch (anim.type) {
+      case "fade":
+        obj.set({ opacity: 0 });
+        tween({
+          startValue: 0, endValue: orig.opacity, duration: dur,
+          onChange: (v: number) => { obj.set("opacity", v); render(); },
+          onComplete: () => obj.set("opacity", orig.opacity),
+        });
+        break;
+      case "slide-left":
+      case "slide-right":
+      case "slide-up":
+      case "slide-down": {
+        const key: "left" | "top" = anim.type === "slide-up" || anim.type === "slide-down" ? "top" : "left";
+        const from = anim.type === "slide-left" ? orig.left - cw
+          : anim.type === "slide-right" ? orig.left + cw
+          : anim.type === "slide-up" ? orig.top - ch
+          : orig.top + ch;
+        const target = key === "left" ? orig.left : orig.top;
+        obj.set(key, from); obj.setCoords();
+        tween({
+          startValue: from, endValue: target, duration: dur, easing: ease.easeOutCubic,
+          onChange: (v: number) => { obj.set(key, v); obj.setCoords(); render(); },
+          onComplete: () => { obj.set({ left: orig.left, top: orig.top }); obj.setCoords(); },
+        });
+        break;
+      }
+      case "zoom-in":
+        obj.set({ scaleX: orig.scaleX * 0.01, scaleY: orig.scaleY * 0.01 });
+        tween({
+          startValue: 0.01, endValue: 1, duration: dur, easing: ease.easeOutCubic,
+          onChange: (v: number) => { obj.set({ scaleX: orig.scaleX * v, scaleY: orig.scaleY * v }); render(); },
+          onComplete: () => obj.set({ scaleX: orig.scaleX, scaleY: orig.scaleY }),
+        });
+        break;
+      case "zoom-out":
+        obj.set({ scaleX: orig.scaleX * 2, scaleY: orig.scaleY * 2, opacity: 0 });
+        tween({
+          startValue: 2, endValue: 1, duration: dur, easing: ease.easeOutCubic,
+          onChange: (v: number) => {
+            obj.set({ scaleX: orig.scaleX * v, scaleY: orig.scaleY * v, opacity: Math.min(1, (2 - v)) });
+            render();
+          },
+          onComplete: () => obj.set({ scaleX: orig.scaleX, scaleY: orig.scaleY, opacity: orig.opacity }),
+        });
+        break;
+      case "spin":
+        tween({
+          startValue: 0, endValue: 360, duration: dur,
+          onChange: (v: number) => { obj.set("angle", (orig.angle + v) % 360); render(); },
+          onComplete: () => obj.set("angle", orig.angle),
+        });
+        break;
+      case "pulse": {
+        const half = dur / 2;
+        (fabric as any).util.animate({
+          startValue: 1, endValue: 1.2, duration: half, easing: ease.easeInOutQuad,
+          onChange: (v: number) => { obj.set({ scaleX: orig.scaleX * v, scaleY: orig.scaleY * v }); render(); },
+          onComplete: () => {
+            tween({
+              startValue: 1.2, endValue: 1, duration: half, easing: ease.easeInOutQuad,
+              onChange: (v: number) => { obj.set({ scaleX: orig.scaleX * v, scaleY: orig.scaleY * v }); render(); },
+              onComplete: () => obj.set({ scaleX: orig.scaleX, scaleY: orig.scaleY }),
+            });
+          },
+        });
+        break;
+      }
+      case "bounce": {
+        const startTop = orig.top - 80;
+        obj.set({ top: startTop, opacity: 0 });
+        (fabric as any).util.animate({
+          startValue: 0, endValue: orig.opacity, duration: Math.min(300, dur / 2),
+          onChange: (v: number) => { obj.set("opacity", v); render(); },
+        });
+        tween({
+          startValue: startTop, endValue: orig.top, duration: dur, easing: ease.easeOutBounce,
+          onChange: (v: number) => { obj.set("top", v); obj.setCoords(); render(); },
+          onComplete: () => { obj.set({ top: orig.top, opacity: orig.opacity }); obj.setCoords(); },
+        });
+        break;
+      }
+    }
+  };
+
+  const loop = anim.loop;
+  const driver = () => runOnce(loop ? () => setTimeout(driver, 200) : undefined);
+  if (delay > 0) setTimeout(driver, delay); else driver();
+}
+
 function isVideoStoragePath(path: string) {
   return VIDEO_STORAGE_EXT_RE.test(path);
 }
