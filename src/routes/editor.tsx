@@ -397,15 +397,54 @@ function EditorPage() {
   // Keyboard: arrow-move and delete selected objects
   useEffect(() => {
     if (!fabric) return;
+    const clipboard: { ref: any } = { ref: null };
+    const doCopy = async () => {
+      const fc = fcRef.current; if (!fc) return;
+      const o = fc.getActiveObject(); if (!o) return;
+      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"] as any);
+    };
+    const doPaste = async () => {
+      const fc = fcRef.current; if (!fc || !clipboard.ref) return;
+      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"] as any);
+      c.set({ left: (c.left ?? 0) + 30, top: (c.top ?? 0) + 30, evented: true });
+      if (c.type === "activeselection" || c.type === "activeSelection") {
+        c.canvas = fc;
+        c.forEachObject?.((o: any) => fc.add(o));
+        c.setCoords?.();
+      } else {
+        fc.add(c);
+      }
+      fc.setActiveObject(c);
+      fc.requestRenderAll();
+      fc.fire("object:modified", { target: c } as any);
+    };
     const onKey = (e: KeyboardEvent) => {
       const fc = fcRef.current; if (!fc) return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
       const obj = fc.getActiveObject();
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === "v" || e.key === "V")) { e.preventDefault(); void doPaste(); return; }
       if (!obj) return;
       // Don't intercept while editing text
       if ((obj as any).isEditing) return;
+      if (mod && (e.key === "c" || e.key === "C")) { e.preventDefault(); void doCopy(); return; }
+      if (mod && (e.key === "x" || e.key === "X")) {
+        e.preventDefault();
+        void doCopy().then(() => {
+          const objs = fc.getActiveObjects();
+          objs.forEach((o) => fc.remove(o));
+          fc.discardActiveObject();
+          fc.requestRenderAll();
+        });
+        return;
+      }
+      if (mod && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        void doCopy().then(doPaste);
+        return;
+      }
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         const objs = fc.getActiveObjects();
