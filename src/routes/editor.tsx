@@ -1259,7 +1259,7 @@ function EditorPage() {
       fc.setDimensions({ width: w, height: h });
       fc.renderAll();
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
+      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
       applyCanvasDisplayZoom(fc, w, h, prevZoom);
 
