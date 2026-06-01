@@ -1394,8 +1394,11 @@ function EditorPage() {
           </Button>
         </div>
         <div ref={canvasHostRef} className="flex-1 overflow-auto flex items-start justify-center p-8">
-          <div className="bg-white shadow-[var(--shadow-elegant)] inline-block">
-            <canvas ref={canvasRef} />
+          <div className="inline-block relative" style={{ paddingTop: showRulers ? 20 : 0, paddingLeft: showRulers ? 20 : 0 }}>
+            {showRulers && <Rulers preset={preset} zoom={zoom} />}
+            <div className="bg-white shadow-[var(--shadow-elegant)] inline-block">
+              <canvas ref={canvasRef} />
+            </div>
           </div>
         </div>
       </div>
