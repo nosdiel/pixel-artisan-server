@@ -18,6 +18,7 @@ import { VideoEditorDialog, type EditedVideoResult } from "@/components/VideoEdi
 import { useSquareCatalog, useSquareSyncState, useTriggerSquareSync } from "@/lib/useSquare";
 import { uploadEditedMediaToFirebase, waitForMediaReady } from "@/integrations/firebase/media";
 import { uploadCompanyMedia, redirectToReturnUrl } from "@/integrations/firebase/company-media";
+import { getSignageSettings } from "@/lib/signage.functions";
 import {
   Upload, Type, Square as SquareIcon, Circle as CircleIcon, Triangle as TriangleIcon,
   RotateCw, FlipHorizontal, FlipVertical, Save, Trash2, Copy,
@@ -374,6 +375,27 @@ function EditorPage() {
   const fontInputRef = useRef<HTMLInputElement>(null);
   const [squareItems, setSquareItems] = useState<SquareCacheItem[]>([]);
   const navigate = useNavigate();
+
+  // companyId for the logged-in user, used so that uploadEditedMediaToFirebase
+  // can tell the Cloud Function to mirror processed media into the
+  // `companies/{companyId}/media/{mediaId}` doc the Android player reads.
+  const [loggedInCompanyId, setLoggedInCompanyId] = useState<string | null>(null);
+  useEffect(() => {
+    if (externalMode) return;
+    let cancelled = false;
+    getSignageSettings()
+      .then((res) => {
+        if (cancelled) return;
+        const cid = (res?.settings as { company_id?: string | null } | null | undefined)?.company_id;
+        if (cid) setLoggedInCompanyId(cid);
+      })
+      .catch(() => {
+        /* fine — uploads still work without a companyId, they just won't mirror */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [externalMode]);
 
   // Drawing / shape tool state
   type Tool = "select" | "draw" | "eraser" | "line" | "arrow";
