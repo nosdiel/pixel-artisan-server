@@ -162,6 +162,15 @@ export async function uploadEditedMediaToFirebase(
   };
   if (companyId) uploadMetadata.companyId = companyId;
   if (companyMediaId) uploadMetadata.companyMediaId = companyMediaId;
+  if (companyMediaPath) uploadMetadata.companyMediaPath = companyMediaPath;
+  console.info("[firebase upload] uploadEditedMediaToFirebase metadata", {
+    mediaDocId,
+    companyId,
+    companyMediaId,
+    companyMediaPath,
+    path,
+    customMetadata: uploadMetadata,
+  });
   await uploadBytes(fileRef, input.blob, {
     contentType: input.contentType,
     customMetadata: uploadMetadata,
@@ -183,6 +192,7 @@ export async function uploadEditedMediaToFirebase(
     };
     if (companyId) thumbMetadata.companyId = companyId;
     if (companyMediaId) thumbMetadata.companyMediaId = companyMediaId;
+    if (companyMediaPath) thumbMetadata.companyMediaPath = companyMediaPath;
     await uploadBytes(thumbRef, input.thumbnailBlob, {
       contentType: thumbType,
       customMetadata: thumbMetadata,
