@@ -95,8 +95,16 @@ type AnimationType =
   | "zoom-out"
   | "spin"
   | "pulse"
-  | "bounce";
-type ObjectAnimation = { type: AnimationType; duration: number; delay: number; loop: boolean };
+  | "bounce"
+  | "slideshow";
+type ObjectAnimation = {
+  type: AnimationType;
+  duration: number;
+  delay: number;
+  loop: boolean;
+  /** Slideshow: seconds each frame is shown. */
+  interval?: number;
+};
 const ANIMATION_OPTIONS: { value: AnimationType; label: string }[] = [
   { value: "none", label: "None" },
   { value: "fade", label: "Fade in" },
@@ -109,7 +117,62 @@ const ANIMATION_OPTIONS: { value: AnimationType; label: string }[] = [
   { value: "spin", label: "Spin" },
   { value: "pulse", label: "Pulse" },
   { value: "bounce", label: "Bounce in" },
+  { value: "slideshow", label: "Slideshow (images)" },
 ];
+
+/** Slideshow frame stored on a FabricImage as `slideshowImages`. */
+type SlideshowFrame = { url: string; path?: string };
+
+/** Stop any currently-running slideshow on this object. */
+function stopSlideshow(obj: any) {
+  if (obj?.__slideshowTimer) {
+    clearTimeout(obj.__slideshowTimer);
+    obj.__slideshowTimer = null;
+  }
+  obj.__slideshowRunning = false;
+}
+
+function playSlideshow(fc: Fabric.Canvas, obj: any, fabric: FabricModule, anim: ObjectAnimation) {
+  const frames: SlideshowFrame[] = Array.isArray(obj.slideshowImages) ? obj.slideshowImages : [];
+  const baseSrc = getFabricObjectSrc(obj);
+  const allUrls: string[] = [baseSrc, ...frames.map((f) => f.url)].filter(Boolean) as string[];
+  if (allUrls.length < 2) return;
+  const interval = Math.max(300, (anim.interval ?? 2) * 1000);
+  const fadeMs = Math.min(400, Math.floor(interval / 3));
+  const baseOpacity = obj.opacity ?? 1;
+  stopSlideshow(obj);
+  obj.__slideshowRunning = true;
+
+  let idx = 0;
+  const tween = (start: number, end: number, duration: number, onDone?: () => void) => {
+    (fabric as any).util.animate({
+      startValue: start, endValue: end, duration,
+      onChange: (v: number) => { obj.set("opacity", v); fc.requestRenderAll(); },
+      onComplete: () => { obj.set("opacity", end); onDone?.(); },
+    });
+  };
+
+  const goNext = async () => {
+    if (!obj.__slideshowRunning) return;
+    const next = (idx + 1) % allUrls.length;
+    // Stop after one cycle if not looping.
+    if (!anim.loop && next === 0) { stopSlideshow(obj); return; }
+    tween(baseOpacity, 0, fadeMs, async () => {
+      try {
+        await (obj as any).setSrc(allUrls[next], { crossOrigin: "anonymous" });
+      } catch { /* ignore broken frame */ }
+      idx = next;
+      fc.requestRenderAll();
+      tween(0, baseOpacity, fadeMs, () => {
+        if (!obj.__slideshowRunning) return;
+        obj.__slideshowTimer = setTimeout(goNext, Math.max(50, interval - 2 * fadeMs));
+      });
+    });
+  };
+
+  // Start cycle after the first display interval.
+  obj.__slideshowTimer = setTimeout(goNext, interval);
+}
 
 function playObjectAnimation(
   fc: Fabric.Canvas,
@@ -217,6 +280,11 @@ function playObjectAnimation(
         });
         break;
       }
+      case "slideshow":
+        // Slideshow is a continuous frame-cycler — runs on its own loop and
+        // ignores the outer driver loop below.
+        playSlideshow(fc, obj, fabric, anim);
+        return;
     }
   };
 
@@ -545,11 +613,11 @@ function EditorPage() {
     const doCopy = async () => {
       const fc = fcRef.current; if (!fc) return;
       const o = fc.getActiveObject(); if (!o) return;
-      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"] as any);
+      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation", "slideshowImages"] as any);
     };
     const doPaste = async () => {
       const fc = fcRef.current; if (!fc || !clipboard.ref) return;
-      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"] as any);
+      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation", "slideshowImages"] as any);
       c.set({ left: (c.left ?? 0) + 30, top: (c.top ?? 0) + 30, evented: true });
       if (c.type === "activeselection" || c.type === "activeSelection") {
         c.canvas = fc;
@@ -850,7 +918,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"]);
+    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation", "slideshowImages"]);
     patchSerializedMedia(canvasJson.objects, fc.getObjects());
     const json = JSON.stringify(canvasJson);
     const h = historyRef.current;
@@ -919,6 +987,41 @@ function EditorPage() {
       toast.error(err instanceof Error ? err.message : "Image upload failed", { id: tId });
     } finally {
       e.target.value = "";
+    }
+  };
+
+  /** Upload a single file and return its hosted URL+path, without placing it
+   *  on the canvas. Used by slideshow frame uploads. */
+  const uploadImageFile = async (file: File): Promise<{ url: string; path: string } | null> => {
+    const tId = toast.loading("Uploading image…");
+    try {
+      if (externalMode) {
+        const res = await uploadCompanyMedia({
+          companyId: externalCompanyId!,
+          templateId: templateIdParam!,
+          kind: "image",
+          blob: file,
+          contentType: file.type || "image/png",
+          name: file.name,
+        });
+        toast.success("Image added", { id: tId });
+        return { url: res.url, path: res.path };
+      }
+      const res = await uploadEditedMediaToFirebase({
+        kind: "image",
+        blob: file,
+        contentType: file.type || "image/png",
+        name: file.name,
+      });
+      toast.loading("Processing image…", { id: tId });
+      const ready = await waitForMediaReady(res.mediaDocId).catch(() => null);
+      const finalUrl = (ready?.url as string) || res.url;
+      const finalPath = (ready?.path as string) || res.path;
+      toast.success("Image added", { id: tId });
+      return { url: finalUrl, path: finalPath };
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Image upload failed", { id: tId });
+      return null;
     }
   };
 
@@ -1259,7 +1362,7 @@ function EditorPage() {
       fc.setDimensions({ width: w, height: h });
       fc.renderAll();
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"]);
+      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation", "slideshowImages"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
       applyCanvasDisplayZoom(fc, w, h, prevZoom);
 
@@ -1766,8 +1869,22 @@ function EditorPage() {
             {a && fabric && (
               <AnimationPanel
                 object={a}
+                isImage={isImage}
                 onChange={() => { pushHistory(); refresh(); }}
                 onPreview={() => { const fc = fcRef.current; if (fc) playObjectAnimation(fc, a as any, fabric); }}
+                onStopSlideshow={() => { stopSlideshow(a as any); fcRef.current?.requestRenderAll(); }}
+                onAddSlideshowFrame={async (file) => {
+                  const r = await uploadImageFile(file);
+                  if (!r) return;
+                  const arr: SlideshowFrame[] = Array.isArray((a as any).slideshowImages) ? (a as any).slideshowImages : [];
+                  (a as any).slideshowImages = [...arr, { url: r.url, path: r.path }];
+                  pushHistory(); refresh();
+                }}
+                onRemoveSlideshowFrame={(idx) => {
+                  const arr: SlideshowFrame[] = Array.isArray((a as any).slideshowImages) ? (a as any).slideshowImages : [];
+                  (a as any).slideshowImages = arr.filter((_, i) => i !== idx);
+                  pushHistory(); refresh();
+                }}
               />
             )}
 
@@ -1926,29 +2043,56 @@ function ImageFilters({ fabric, image, onChange }: { fabric: FabricModule; image
   );
 }
 
-function AnimationPanel({ object, onChange, onPreview }: { object: Fabric.Object; onChange: () => void; onPreview: () => void }) {
+function AnimationPanel({
+  object,
+  isImage,
+  onChange,
+  onPreview,
+  onStopSlideshow,
+  onAddSlideshowFrame,
+  onRemoveSlideshowFrame,
+}: {
+  object: Fabric.Object;
+  isImage: boolean;
+  onChange: () => void;
+  onPreview: () => void;
+  onStopSlideshow: () => void;
+  onAddSlideshowFrame: (file: File) => Promise<void> | void;
+  onRemoveSlideshowFrame: (idx: number) => void;
+}) {
   const anim: ObjectAnimation = ((object as any).animation as ObjectAnimation | undefined) ?? { type: "none", duration: 1, delay: 0, loop: false };
+  const frames: SlideshowFrame[] = Array.isArray((object as any).slideshowImages) ? (object as any).slideshowImages : [];
   const update = (patch: Partial<ObjectAnimation>) => {
     const next: ObjectAnimation = { ...anim, ...patch };
     if (next.type === "none") delete (object as any).animation;
     else (object as any).animation = next;
     onChange();
   };
+  // Hide "Slideshow" for non-image layers (it relies on swapping image src).
+  const options = isImage ? ANIMATION_OPTIONS : ANIMATION_OPTIONS.filter((o) => o.value !== "slideshow");
   return (
     <div className="space-y-2 rounded border border-border p-2">
       <Label className="text-xs flex items-center gap-1.5"><Sparkles className="size-3" /> Animation</Label>
       <Select value={anim.type} onValueChange={(v) => update({ type: v as AnimationType })}>
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
-          {ANIMATION_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+          {options.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
         </SelectContent>
       </Select>
       {anim.type !== "none" && (
         <>
-          <div>
-            <Label className="text-xs">Duration ({anim.duration.toFixed(1)}s)</Label>
-            <Slider min={0.1} max={5} step={0.1} value={[anim.duration]} onValueChange={(v) => update({ duration: v[0] })} className="mt-2" />
-          </div>
+          {anim.type !== "slideshow" && (
+            <div>
+              <Label className="text-xs">Duration ({anim.duration.toFixed(1)}s)</Label>
+              <Slider min={0.1} max={5} step={0.1} value={[anim.duration]} onValueChange={(v) => update({ duration: v[0] })} className="mt-2" />
+            </div>
+          )}
+          {anim.type === "slideshow" && (
+            <div>
+              <Label className="text-xs">Each frame ({(anim.interval ?? 2).toFixed(1)}s)</Label>
+              <Slider min={0.5} max={15} step={0.5} value={[anim.interval ?? 2]} onValueChange={(v) => update({ interval: v[0] })} className="mt-2" />
+            </div>
+          )}
           <div>
             <Label className="text-xs">Delay ({anim.delay.toFixed(1)}s)</Label>
             <Slider min={0} max={5} step={0.1} value={[anim.delay]} onValueChange={(v) => update({ delay: v[0] })} className="mt-2" />
@@ -1961,6 +2105,45 @@ function AnimationPanel({ object, onChange, onPreview }: { object: Fabric.Object
               <Play className="size-3.5 mr-1" /> Preview
             </Button>
           </div>
+          {anim.type === "slideshow" && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Frames ({frames.length + 1})</Label>
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onStopSlideshow}>Stop</Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                The current image is frame 1. Upload more to cycle through.
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {frames.map((f, i) => (
+                  <div key={`${f.url}-${i}`} className="relative aspect-square rounded overflow-hidden border border-border group">
+                    <img src={f.url} alt="" className="size-full object-cover" />
+                    <button
+                      onClick={() => onRemoveSlideshowFrame(i)}
+                      className="absolute top-0.5 right-0.5 size-5 rounded bg-background/80 text-destructive opacity-0 group-hover:opacity-100 flex items-center justify-center"
+                      title="Remove frame"
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                    <span className="absolute bottom-0.5 left-0.5 text-[10px] bg-background/80 rounded px-1">{i + 2}</span>
+                  </div>
+                ))}
+                <label className="aspect-square rounded border border-dashed border-border flex items-center justify-center cursor-pointer hover:bg-accent">
+                  <Plus className="size-4 text-muted-foreground" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.currentTarget.value = "";
+                      if (f) await onAddSlideshowFrame(f);
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
