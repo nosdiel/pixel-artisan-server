@@ -613,11 +613,11 @@ function EditorPage() {
     const doCopy = async () => {
       const fc = fcRef.current; if (!fc) return;
       const o = fc.getActiveObject(); if (!o) return;
-      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"] as any);
+      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation", "slideshowImages"] as any);
     };
     const doPaste = async () => {
       const fc = fcRef.current; if (!fc || !clipboard.ref) return;
-      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"] as any);
+      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation", "slideshowImages"] as any);
       c.set({ left: (c.left ?? 0) + 30, top: (c.top ?? 0) + 30, evented: true });
       if (c.type === "activeselection" || c.type === "activeSelection") {
         c.canvas = fc;
@@ -918,7 +918,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"]);
+    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation", "slideshowImages"]);
     patchSerializedMedia(canvasJson.objects, fc.getObjects());
     const json = JSON.stringify(canvasJson);
     const h = historyRef.current;
@@ -1327,7 +1327,7 @@ function EditorPage() {
       fc.setDimensions({ width: w, height: h });
       fc.renderAll();
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"]);
+      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation", "slideshowImages"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
       applyCanvasDisplayZoom(fc, w, h, prevZoom);
 
