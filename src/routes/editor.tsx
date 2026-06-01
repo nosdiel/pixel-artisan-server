@@ -1763,6 +1763,14 @@ function EditorPage() {
               <ImageFilters fabric={fabric} image={a as Fabric.FabricImage} onChange={() => { fcRef.current?.renderAll(); pushHistory(); refresh(); }} />
             )}
 
+            {a && fabric && (
+              <AnimationPanel
+                object={a}
+                onChange={() => { pushHistory(); refresh(); }}
+                onPreview={() => { const fc = fcRef.current; if (fc) playObjectAnimation(fc, a as any, fabric); }}
+              />
+            )}
+
             <div>
               <Label className="text-xs">Opacity ({Math.round((a.opacity ?? 1) * 100)}%)</Label>
               <Slider min={0} max={100} step={1} value={[(a.opacity ?? 1) * 100]} onValueChange={(v) => update(() => a.set("opacity", v[0] / 100))} className="mt-2" />
