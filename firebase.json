@@ -5,6 +5,12 @@
       "codebase": "compressor",
       "runtime": "nodejs20",
       "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "source": "functions-square",
+      "codebase": "square",
+      "runtime": "nodejs20",
+      "ignore": ["node_modules", ".git", "*.log"]
     }
   ],
   "firestore": {
