@@ -451,7 +451,13 @@ function TemplatesPage() {
   // ====== Video recording flow ======
   async function recordTemplateVideo(
     templateId: string,
-    prep: { width: number; height: number; canvasJson: FabricCanvasJson; name?: string },
+    prep: {
+      width: number;
+      height: number;
+      canvasJson: FabricCanvasJson;
+      name?: string;
+      companyId?: string | null;
+    },
   ) {
     const fabric = await import("fabric");
     const canvasEl = document.createElement("canvas");
