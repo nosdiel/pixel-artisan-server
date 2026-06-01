@@ -25,6 +25,7 @@ import {
   Image as ImageIcon, Layers, Eye, EyeOff, Bold, Italic, Underline,
   AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw, Video as VideoIcon,
   Pencil, Eraser, Minus, MoveUpRight, Star, Hexagon, Ruler, MousePointer2,
+  Play, Sparkles,
 } from "lucide-react";
 
 const PRESETS: Record<string, { w: number; h: number; label: string }> = {
