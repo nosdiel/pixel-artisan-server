@@ -8,8 +8,8 @@
     "node": "20"
   },
   "scripts": {
-    "serve": "firebase emulators:start --only functions:square",
-    "deploy": "firebase deploy --only functions:square",
+    "serve": "firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"
   },
   "dependencies": {
