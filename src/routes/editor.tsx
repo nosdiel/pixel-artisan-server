@@ -545,11 +545,11 @@ function EditorPage() {
     const doCopy = async () => {
       const fc = fcRef.current; if (!fc) return;
       const o = fc.getActiveObject(); if (!o) return;
-      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"] as any);
+      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"] as any);
     };
     const doPaste = async () => {
       const fc = fcRef.current; if (!fc || !clipboard.ref) return;
-      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"] as any);
+      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"] as any);
       c.set({ left: (c.left ?? 0) + 30, top: (c.top ?? 0) + 30, evented: true });
       if (c.type === "activeselection" || c.type === "activeSelection") {
         c.canvas = fc;
@@ -850,7 +850,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
+    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"]);
     patchSerializedMedia(canvasJson.objects, fc.getObjects());
     const json = JSON.stringify(canvasJson);
     const h = historyRef.current;
