@@ -953,8 +953,7 @@ function EditorPage() {
     let obj: any = null;
     let start = { x: 0, y: 0 };
     const onDown = (e: any) => {
-      const p = fc.getViewportPoint ? fc.getViewportPoint(e.e) : fc.getPointer(e.e);
-      const pt = fc.getPointer(e.e);
+      const pt = (fc as any).getScenePoint ? (fc as any).getScenePoint(e.e) : (fc as any).getPointer(e.e);
       start = { x: pt.x, y: pt.y };
       drawing = true;
       obj = new fabric.Line([pt.x, pt.y, pt.x, pt.y], {
@@ -965,11 +964,10 @@ function EditorPage() {
       });
       (obj as any)._isArrowTool = tool === "arrow";
       fc.add(obj);
-      void p;
     };
     const onMove = (e: any) => {
       if (!drawing || !obj) return;
-      const pt = fc.getPointer(e.e);
+      const pt = (fc as any).getScenePoint ? (fc as any).getScenePoint(e.e) : (fc as any).getPointer(e.e);
       obj.set({ x2: pt.x, y2: pt.y });
       fc.requestRenderAll();
     };
