@@ -1,0 +1,10 @@
+{
+  "functions": [
+    {
+      "source": ".",
+      "codebase": "square",
+      "runtime": "nodejs20",
+      "ignore": ["node_modules", ".git", "*.log", "firebase.json"]
+    }
+  ]
+}
