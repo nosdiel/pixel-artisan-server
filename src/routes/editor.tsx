@@ -163,6 +163,13 @@ function EditorPage() {
   const [squareItems, setSquareItems] = useState<SquareCacheItem[]>([]);
   const navigate = useNavigate();
 
+  // Drawing / shape tool state
+  type Tool = "select" | "draw" | "eraser" | "line" | "arrow";
+  const [tool, setTool] = useState<Tool>("select");
+  const [brushColor, setBrushColor] = useState("#111827");
+  const [brushSize, setBrushSize] = useState(8);
+  const [showRulers, setShowRulers] = useState(true);
+
   const resolveOwnerId = useCallback(async () => {
     if (externalCompanyId) return externalCompanyId;
     const { data: ud } = await supabase.auth.getUser();
