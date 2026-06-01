@@ -2043,29 +2043,56 @@ function ImageFilters({ fabric, image, onChange }: { fabric: FabricModule; image
   );
 }
 
-function AnimationPanel({ object, onChange, onPreview }: { object: Fabric.Object; onChange: () => void; onPreview: () => void }) {
+function AnimationPanel({
+  object,
+  isImage,
+  onChange,
+  onPreview,
+  onStopSlideshow,
+  onAddSlideshowFrame,
+  onRemoveSlideshowFrame,
+}: {
+  object: Fabric.Object;
+  isImage: boolean;
+  onChange: () => void;
+  onPreview: () => void;
+  onStopSlideshow: () => void;
+  onAddSlideshowFrame: (file: File) => Promise<void> | void;
+  onRemoveSlideshowFrame: (idx: number) => void;
+}) {
   const anim: ObjectAnimation = ((object as any).animation as ObjectAnimation | undefined) ?? { type: "none", duration: 1, delay: 0, loop: false };
+  const frames: SlideshowFrame[] = Array.isArray((object as any).slideshowImages) ? (object as any).slideshowImages : [];
   const update = (patch: Partial<ObjectAnimation>) => {
     const next: ObjectAnimation = { ...anim, ...patch };
     if (next.type === "none") delete (object as any).animation;
     else (object as any).animation = next;
     onChange();
   };
+  // Hide "Slideshow" for non-image layers (it relies on swapping image src).
+  const options = isImage ? ANIMATION_OPTIONS : ANIMATION_OPTIONS.filter((o) => o.value !== "slideshow");
   return (
     <div className="space-y-2 rounded border border-border p-2">
       <Label className="text-xs flex items-center gap-1.5"><Sparkles className="size-3" /> Animation</Label>
       <Select value={anim.type} onValueChange={(v) => update({ type: v as AnimationType })}>
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
-          {ANIMATION_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+          {options.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
         </SelectContent>
       </Select>
       {anim.type !== "none" && (
         <>
-          <div>
-            <Label className="text-xs">Duration ({anim.duration.toFixed(1)}s)</Label>
-            <Slider min={0.1} max={5} step={0.1} value={[anim.duration]} onValueChange={(v) => update({ duration: v[0] })} className="mt-2" />
-          </div>
+          {anim.type !== "slideshow" && (
+            <div>
+              <Label className="text-xs">Duration ({anim.duration.toFixed(1)}s)</Label>
+              <Slider min={0.1} max={5} step={0.1} value={[anim.duration]} onValueChange={(v) => update({ duration: v[0] })} className="mt-2" />
+            </div>
+          )}
+          {anim.type === "slideshow" && (
+            <div>
+              <Label className="text-xs">Each frame ({(anim.interval ?? 2).toFixed(1)}s)</Label>
+              <Slider min={0.5} max={15} step={0.5} value={[anim.interval ?? 2]} onValueChange={(v) => update({ interval: v[0] })} className="mt-2" />
+            </div>
+          )}
           <div>
             <Label className="text-xs">Delay ({anim.delay.toFixed(1)}s)</Label>
             <Slider min={0} max={5} step={0.1} value={[anim.delay]} onValueChange={(v) => update({ delay: v[0] })} className="mt-2" />
@@ -2078,6 +2105,45 @@ function AnimationPanel({ object, onChange, onPreview }: { object: Fabric.Object
               <Play className="size-3.5 mr-1" /> Preview
             </Button>
           </div>
+          {anim.type === "slideshow" && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Frames ({frames.length + 1})</Label>
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onStopSlideshow}>Stop</Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                The current image is frame 1. Upload more to cycle through.
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {frames.map((f, i) => (
+                  <div key={`${f.url}-${i}`} className="relative aspect-square rounded overflow-hidden border border-border group">
+                    <img src={f.url} alt="" className="size-full object-cover" />
+                    <button
+                      onClick={() => onRemoveSlideshowFrame(i)}
+                      className="absolute top-0.5 right-0.5 size-5 rounded bg-background/80 text-destructive opacity-0 group-hover:opacity-100 flex items-center justify-center"
+                      title="Remove frame"
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                    <span className="absolute bottom-0.5 left-0.5 text-[10px] bg-background/80 rounded px-1">{i + 2}</span>
+                  </div>
+                ))}
+                <label className="aspect-square rounded border border-dashed border-border flex items-center justify-center cursor-pointer hover:bg-accent">
+                  <Plus className="size-4 text-muted-foreground" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.currentTarget.value = "";
+                      if (f) await onAddSlideshowFrame(f);
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
