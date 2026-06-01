@@ -95,8 +95,16 @@ type AnimationType =
   | "zoom-out"
   | "spin"
   | "pulse"
-  | "bounce";
-type ObjectAnimation = { type: AnimationType; duration: number; delay: number; loop: boolean };
+  | "bounce"
+  | "slideshow";
+type ObjectAnimation = {
+  type: AnimationType;
+  duration: number;
+  delay: number;
+  loop: boolean;
+  /** Slideshow: seconds each frame is shown. */
+  interval?: number;
+};
 const ANIMATION_OPTIONS: { value: AnimationType; label: string }[] = [
   { value: "none", label: "None" },
   { value: "fade", label: "Fade in" },
@@ -109,7 +117,62 @@ const ANIMATION_OPTIONS: { value: AnimationType; label: string }[] = [
   { value: "spin", label: "Spin" },
   { value: "pulse", label: "Pulse" },
   { value: "bounce", label: "Bounce in" },
+  { value: "slideshow", label: "Slideshow (images)" },
 ];
+
+/** Slideshow frame stored on a FabricImage as `slideshowImages`. */
+type SlideshowFrame = { url: string; path?: string };
+
+/** Stop any currently-running slideshow on this object. */
+function stopSlideshow(obj: any) {
+  if (obj?.__slideshowTimer) {
+    clearTimeout(obj.__slideshowTimer);
+    obj.__slideshowTimer = null;
+  }
+  obj.__slideshowRunning = false;
+}
+
+function playSlideshow(fc: Fabric.Canvas, obj: any, fabric: FabricModule, anim: ObjectAnimation) {
+  const frames: SlideshowFrame[] = Array.isArray(obj.slideshowImages) ? obj.slideshowImages : [];
+  const baseSrc = getFabricObjectSrc(obj);
+  const allUrls: string[] = [baseSrc, ...frames.map((f) => f.url)].filter(Boolean) as string[];
+  if (allUrls.length < 2) return;
+  const interval = Math.max(300, (anim.interval ?? 2) * 1000);
+  const fadeMs = Math.min(400, Math.floor(interval / 3));
+  const baseOpacity = obj.opacity ?? 1;
+  stopSlideshow(obj);
+  obj.__slideshowRunning = true;
+
+  let idx = 0;
+  const tween = (start: number, end: number, duration: number, onDone?: () => void) => {
+    (fabric as any).util.animate({
+      startValue: start, endValue: end, duration,
+      onChange: (v: number) => { obj.set("opacity", v); fc.requestRenderAll(); },
+      onComplete: () => { obj.set("opacity", end); onDone?.(); },
+    });
+  };
+
+  const goNext = async () => {
+    if (!obj.__slideshowRunning) return;
+    const next = (idx + 1) % allUrls.length;
+    // Stop after one cycle if not looping.
+    if (!anim.loop && next === 0) { stopSlideshow(obj); return; }
+    tween(baseOpacity, 0, fadeMs, async () => {
+      try {
+        await (obj as any).setSrc(allUrls[next], { crossOrigin: "anonymous" });
+      } catch { /* ignore broken frame */ }
+      idx = next;
+      fc.requestRenderAll();
+      tween(0, baseOpacity, fadeMs, () => {
+        if (!obj.__slideshowRunning) return;
+        obj.__slideshowTimer = setTimeout(goNext, Math.max(50, interval - 2 * fadeMs));
+      });
+    });
+  };
+
+  // Start cycle after the first display interval.
+  obj.__slideshowTimer = setTimeout(goNext, interval);
+}
 
 function playObjectAnimation(
   fc: Fabric.Canvas,
