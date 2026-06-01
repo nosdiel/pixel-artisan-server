@@ -990,6 +990,41 @@ function EditorPage() {
     }
   };
 
+  /** Upload a single file and return its hosted URL+path, without placing it
+   *  on the canvas. Used by slideshow frame uploads. */
+  const uploadImageFile = async (file: File): Promise<{ url: string; path: string } | null> => {
+    const tId = toast.loading("Uploading image…");
+    try {
+      if (externalMode) {
+        const res = await uploadCompanyMedia({
+          companyId: externalCompanyId!,
+          templateId: templateIdParam!,
+          kind: "image",
+          blob: file,
+          contentType: file.type || "image/png",
+          name: file.name,
+        });
+        toast.success("Image added", { id: tId });
+        return { url: res.url, path: res.path };
+      }
+      const res = await uploadEditedMediaToFirebase({
+        kind: "image",
+        blob: file,
+        contentType: file.type || "image/png",
+        name: file.name,
+      });
+      toast.loading("Processing image…", { id: tId });
+      const ready = await waitForMediaReady(res.mediaDocId).catch(() => null);
+      const finalUrl = (ready?.url as string) || res.url;
+      const finalPath = (ready?.path as string) || res.path;
+      toast.success("Image added", { id: tId });
+      return { url: finalUrl, path: finalPath };
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Image upload failed", { id: tId });
+      return null;
+    }
+  };
+
   const videoRafRef = useRef<Set<number>>(new Set());
   const startVideoRaf = (fc: Fabric.Canvas, video: HTMLVideoElement) => {
     let rafId = 0;
