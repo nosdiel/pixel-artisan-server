@@ -882,6 +882,131 @@ function EditorPage() {
     fc.add(o); fc.setActiveObject(o); fc.renderAll();
   };
 
+  const addEllipse = () => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const o = new fabric.Ellipse({ left: w / 2 - 180, top: h / 2 - 100, rx: 180, ry: 100, fill: "#3b82f6" });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+  const addStar = (points = 5) => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const outer = 150, inner = 70;
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i < points * 2; i++) {
+      const r = i % 2 === 0 ? outer : inner;
+      const a = (Math.PI / points) * i - Math.PI / 2;
+      pts.push({ x: Math.cos(a) * r + outer, y: Math.sin(a) * r + outer });
+    }
+    const o = new fabric.Polygon(pts, { left: w / 2 - outer, top: h / 2 - outer, fill: "#f59e0b" });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+  const addPolygon = (sides = 6) => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const r = 140;
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i < sides; i++) {
+      const a = (Math.PI * 2 / sides) * i - Math.PI / 2;
+      pts.push({ x: Math.cos(a) * r + r, y: Math.sin(a) * r + r });
+    }
+    const o = new fabric.Polygon(pts, { left: w / 2 - r, top: h / 2 - r, fill: "#10b981" });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+  const addLine = () => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const o = new fabric.Line([w / 2 - 200, h / 2, w / 2 + 200, h / 2], { stroke: brushColor, strokeWidth: Math.max(2, brushSize) });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+  const addArrow = () => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const sw = Math.max(2, brushSize);
+    const len = 360;
+    const x1 = w / 2 - len / 2, y = h / 2, x2 = w / 2 + len / 2;
+    const line = new fabric.Line([x1, y, x2 - 18, y], { stroke: brushColor, strokeWidth: sw });
+    const head = new fabric.Triangle({ left: x2, top: y, originX: "center", originY: "center", angle: 90, width: 24, height: 28, fill: brushColor });
+    const grp = new fabric.Group([line, head], { left: x1, top: y - 14 });
+    fc.add(grp); fc.setActiveObject(grp); fc.renderAll();
+  };
+
+  // Apply drawing tool to fabric canvas
+  useEffect(() => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    if (tool === "draw" || tool === "eraser") {
+      fc.isDrawingMode = true;
+      const brush = new fabric.PencilBrush(fc);
+      brush.color = tool === "eraser" ? (bgColor || "#ffffff") : brushColor;
+      brush.width = brushSize;
+      fc.freeDrawingBrush = brush;
+    } else {
+      fc.isDrawingMode = false;
+    }
+  }, [tool, brushColor, brushSize, bgColor, fabric]);
+
+  // Interactive line / arrow drawing
+  useEffect(() => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    if (tool !== "line" && tool !== "arrow") return;
+    let drawing = false;
+    let obj: any = null;
+    let start = { x: 0, y: 0 };
+    const onDown = (e: any) => {
+      const p = fc.getViewportPoint ? fc.getViewportPoint(e.e) : fc.getPointer(e.e);
+      const pt = fc.getPointer(e.e);
+      start = { x: pt.x, y: pt.y };
+      drawing = true;
+      obj = new fabric.Line([pt.x, pt.y, pt.x, pt.y], {
+        stroke: brushColor,
+        strokeWidth: Math.max(2, brushSize),
+        selectable: false,
+        evented: false,
+      });
+      (obj as any)._isArrowTool = tool === "arrow";
+      fc.add(obj);
+      void p;
+    };
+    const onMove = (e: any) => {
+      if (!drawing || !obj) return;
+      const pt = fc.getPointer(e.e);
+      obj.set({ x2: pt.x, y2: pt.y });
+      fc.requestRenderAll();
+    };
+    const onUp = () => {
+      if (!drawing || !obj) return;
+      drawing = false;
+      obj.set({ selectable: true, evented: true });
+      if (tool === "arrow") {
+        const line = obj as Fabric.Line;
+        const x1 = line.x1!, y1 = line.y1!, x2 = line.x2!, y2 = line.y2!;
+        fc.remove(line);
+        const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+        const ln = new fabric.Line([x1, y1, x2, y2], { stroke: brushColor, strokeWidth: Math.max(2, brushSize) });
+        const head = new fabric.Triangle({
+          left: x2, top: y2, originX: "center", originY: "center",
+          angle: angle + 90, width: 22, height: 26, fill: brushColor,
+        });
+        const grp = new fabric.Group([ln, head]);
+        fc.add(grp);
+        fc.setActiveObject(grp);
+      } else {
+        fc.setActiveObject(obj);
+      }
+      obj = null;
+      fc.requestRenderAll();
+      setTool("select");
+    };
+    fc.on("mouse:down", onDown);
+    fc.on("mouse:move", onMove);
+    fc.on("mouse:up", onUp);
+    return () => {
+      fc.off("mouse:down", onDown);
+      fc.off("mouse:move", onMove);
+      fc.off("mouse:up", onUp);
+    };
+  }, [tool, brushColor, brushSize, fabric]);
+
   // Active-object actions
   const a = active;
   const update = (fn: () => void) => { fn(); fcRef.current?.renderAll(); pushHistory(); refresh(); };
