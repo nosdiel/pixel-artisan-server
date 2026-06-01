@@ -1580,6 +1580,45 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
+function Rulers({ preset, zoom }: { preset: string; zoom: number }) {
+  const { w, h } = getCanvasSize(preset);
+  const dispW = w * zoom;
+  const dispH = h * zoom;
+  // Choose tick spacing in canvas px so on-screen spacing stays ~80px
+  const targetPx = 80;
+  const candidates = [10, 20, 50, 100, 200, 500, 1000, 2000];
+  const step = candidates.find((s) => s * zoom >= targetPx) ?? 2000;
+  const xTicks: number[] = [];
+  for (let x = 0; x <= w; x += step) xTicks.push(x);
+  const yTicks: number[] = [];
+  for (let y = 0; y <= h; y += step) yTicks.push(y);
+  return (
+    <>
+      <div
+        className="absolute top-0 left-5 bg-muted border-b border-border text-[9px] text-muted-foreground select-none"
+        style={{ width: dispW, height: 20 }}
+      >
+        {xTicks.map((x) => (
+          <div key={x} className="absolute top-0 bottom-0 border-l border-border/70" style={{ left: x * zoom }}>
+            <span className="pl-0.5">{x}</span>
+          </div>
+        ))}
+      </div>
+      <div
+        className="absolute left-0 top-5 bg-muted border-r border-border text-[9px] text-muted-foreground select-none"
+        style={{ height: dispH, width: 20 }}
+      >
+        {yTicks.map((y) => (
+          <div key={y} className="absolute left-0 right-0 border-t border-border/70" style={{ top: y * zoom }}>
+            <span className="pl-0.5 block leading-none pt-0.5">{y}</span>
+          </div>
+        ))}
+      </div>
+      <div className="absolute top-0 left-0 size-5 bg-muted border-r border-b border-border" />
+    </>
+  );
+}
+
 function ImageFilters({ fabric, image, onChange }: { fabric: FabricModule; image: Fabric.FabricImage; onChange: () => void }) {
   const getFilter = (Type: any) => image.filters.find((f: unknown) => f instanceof Type) as any;
   const setFilter = (Type: any, opts: Record<string, number>) => {
