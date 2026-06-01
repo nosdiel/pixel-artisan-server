@@ -111,6 +111,8 @@ export async function uploadEditedMediaToFirebase(
   const storage = getStorage(fb.app);
   const mediaCol = collection(fb.db, "media");
 
+  const companyId = input.companyId ?? null;
+
   // 1. Create the Firestore doc up-front so we have a stable id.
   const mediaRef = await addDoc(mediaCol, {
     ownerUid: uid,
@@ -127,6 +129,12 @@ export async function uploadEditedMediaToFirebase(
     contentType: input.contentType,
   });
   const mediaDocId = mediaRef.id;
+  const companyMediaId = companyId
+    ? input.companyMediaId ?? mediaDocId
+    : null;
+  const companyMediaPath = companyId && companyMediaId
+    ? `companies/${companyId}/media/${companyMediaId}`
+    : null;
 
   const ext = extFor(input.contentType, input.kind === "video" ? "mp4" : "bin");
   const folder = input.kind === "video" ? "videos" : "images";
@@ -135,9 +143,16 @@ export async function uploadEditedMediaToFirebase(
   // 2. Upload the main asset. customMetadata.mediaDocId lets the Storage
   //    trigger know which Firestore doc to update after compression.
   const fileRef = ref(storage, path);
+  const uploadMetadata: Record<string, string> = {
+    mediaDocId,
+    ownerUid: uid,
+    source: "lovable-editor",
+  };
+  if (companyId) uploadMetadata.companyId = companyId;
+  if (companyMediaId) uploadMetadata.companyMediaId = companyMediaId;
   await uploadBytes(fileRef, input.blob, {
     contentType: input.contentType,
-    customMetadata: { mediaDocId, ownerUid: uid, source: "lovable-editor" },
+    customMetadata: uploadMetadata,
   });
   const url = await getDownloadURL(fileRef);
 
@@ -149,9 +164,16 @@ export async function uploadEditedMediaToFirebase(
     const thumbExt = extFor(thumbType, "jpg");
     thumbnailPath = `users/${uid}/thumbnails/${mediaDocId}.${thumbExt}`;
     const thumbRef = ref(storage, thumbnailPath);
+    const thumbMetadata: Record<string, string> = {
+      mediaDocId,
+      ownerUid: uid,
+      kind: "thumbnail",
+    };
+    if (companyId) thumbMetadata.companyId = companyId;
+    if (companyMediaId) thumbMetadata.companyMediaId = companyMediaId;
     await uploadBytes(thumbRef, input.thumbnailBlob, {
       contentType: thumbType,
-      customMetadata: { mediaDocId, ownerUid: uid, kind: "thumbnail" },
+      customMetadata: thumbMetadata,
     });
     thumbnailURL = await getDownloadURL(thumbRef);
   }
@@ -169,10 +191,22 @@ export async function uploadEditedMediaToFirebase(
     type: input.kind === "video" ? "video" : "image",
     contentType: input.contentType,
     status: "processing",
+    companyId,
+    companyMediaId,
+    companyMediaPath,
     updatedAt: serverTimestamp(),
   });
 
-  return { mediaDocId, path, url, thumbnailPath, thumbnailURL };
+  return {
+    mediaDocId,
+    path,
+    url,
+    thumbnailPath,
+    thumbnailURL,
+    companyId,
+    companyMediaId,
+    companyMediaPath,
+  };
 }
 
 /**
