@@ -8,8 +8,9 @@
  *   Storage:   rendered/{companyId}/{templateId}/{mediaId}.{ext}
  *   Firestore: companies/{companyId}/media/{mediaId}
  *
- * Storage objects always carry `customMetadata.mediaDocId` so the
- * compressor / renderer Cloud Function can locate the matching doc.
+ * Storage objects always carry `customMetadata.mediaDocId` and
+ * `customMetadata.companyMediaId` so the compressor / renderer Cloud
+ * Function can locate and mirror the matching company media doc.
  */
 import {
   doc,
@@ -80,6 +81,7 @@ export async function uploadCompanyMedia(
     customMetadata: {
       mediaDocId: mediaId,
       companyId: input.companyId,
+      companyMediaId: mediaId,
       templateId: input.templateId,
       source: "lovable-editor-external",
     },
@@ -94,7 +96,13 @@ export async function uploadCompanyMedia(
     const thumbRef = ref(storage, thumbnailPath);
     await uploadBytes(thumbRef, input.thumbnailBlob, {
       contentType: thumbType,
-      customMetadata: { mediaDocId: mediaId, companyId: input.companyId, templateId: input.templateId, kind: "thumbnail" },
+      customMetadata: {
+        mediaDocId: mediaId,
+        companyId: input.companyId,
+        companyMediaId: mediaId,
+        templateId: input.templateId,
+        kind: "thumbnail",
+      },
     });
     thumbnailURL = await getDownloadURL(thumbRef);
   }

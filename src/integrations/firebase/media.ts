@@ -110,7 +110,9 @@ export async function uploadEditedMediaToFirebase(
   const storage = getStorage(fb.app);
   const mediaCol = collection(fb.db, "media");
 
-  const companyId = input.companyId ?? null;
+  const companyId = typeof input.companyId === "string" && input.companyId.trim()
+    ? input.companyId.trim()
+    : null;
 
   // 1. Create the Firestore doc up-front so we have a stable id. We must
   //    include companyId/companyMediaId here (NOT only in the post-upload
@@ -120,9 +122,11 @@ export async function uploadEditedMediaToFirebase(
   //    skips the company-media mirror.
   const preMediaRef = doc(mediaCol);
   const mediaDocId = preMediaRef.id;
-  const companyMediaId = companyId
-    ? input.companyMediaId ?? mediaDocId
-    : null;
+  const requestedCompanyMediaId =
+    typeof input.companyMediaId === "string" && input.companyMediaId.trim()
+      ? input.companyMediaId.trim()
+      : null;
+  const companyMediaId = companyId ? requestedCompanyMediaId ?? mediaDocId : null;
   const companyMediaPath = companyId && companyMediaId
     ? `companies/${companyId}/media/${companyMediaId}`
     : null;
@@ -158,6 +162,15 @@ export async function uploadEditedMediaToFirebase(
   };
   if (companyId) uploadMetadata.companyId = companyId;
   if (companyMediaId) uploadMetadata.companyMediaId = companyMediaId;
+  if (companyMediaPath) uploadMetadata.companyMediaPath = companyMediaPath;
+  console.info("[firebase upload] uploadEditedMediaToFirebase metadata", {
+    mediaDocId,
+    companyId,
+    companyMediaId,
+    companyMediaPath,
+    path,
+    customMetadata: uploadMetadata,
+  });
   await uploadBytes(fileRef, input.blob, {
     contentType: input.contentType,
     customMetadata: uploadMetadata,
@@ -179,6 +192,7 @@ export async function uploadEditedMediaToFirebase(
     };
     if (companyId) thumbMetadata.companyId = companyId;
     if (companyMediaId) thumbMetadata.companyMediaId = companyMediaId;
+    if (companyMediaPath) thumbMetadata.companyMediaPath = companyMediaPath;
     await uploadBytes(thumbRef, input.thumbnailBlob, {
       contentType: thumbType,
       customMetadata: thumbMetadata,

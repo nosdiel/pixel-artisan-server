@@ -385,6 +385,9 @@ async function processStoragePath({ storagePath, mediaDocId, contentTypeHint }) 
   const customMeta = meta.metadata || {};
   let companyId = customMeta.companyId || null;
   let companyMediaId = customMeta.companyMediaId || null;
+  if (companyId && !companyMediaId && docId) {
+    companyMediaId = docId;
+  }
 
   logger.info("processStoragePath: customMetadata snapshot", {
     storagePath,
@@ -437,6 +440,11 @@ async function processStoragePath({ storagePath, mediaDocId, contentTypeHint }) 
       .set(
         {
           ...result.fields,
+          companyId: companyId || null,
+          companyMediaId: companyMediaId || null,
+          companyMediaPath: companyId && companyMediaId
+            ? `companies/${companyId}/media/${companyMediaId}`
+            : null,
           ...(result.kind === "image"
             ? {
                 thumbnailURL: result.fields.url,
