@@ -1585,38 +1585,92 @@ function Rulers({ preset, zoom }: { preset: string; zoom: number }) {
   const { w, h } = getCanvasSize(preset);
   const dispW = w * zoom;
   const dispH = h * zoom;
-  // Choose tick spacing in canvas px so on-screen spacing stays ~80px
-  const targetPx = 80;
+  // Major tick stays ~100px on-screen; minor = major/5
+  const targetPx = 100;
   const candidates = [10, 20, 50, 100, 200, 500, 1000, 2000];
-  const step = candidates.find((s) => s * zoom >= targetPx) ?? 2000;
-  const xTicks: number[] = [];
-  for (let x = 0; x <= w; x += step) xTicks.push(x);
-  const yTicks: number[] = [];
-  for (let y = 0; y <= h; y += step) yTicks.push(y);
+  const major = candidates.find((s) => s * zoom >= targetPx) ?? 2000;
+  const minor = Math.max(1, Math.round(major / 5));
+
+  const xMajor: number[] = []; for (let x = 0; x <= w; x += major) xMajor.push(x);
+  const yMajor: number[] = []; for (let y = 0; y <= h; y += major) yMajor.push(y);
+  const xMinor: number[] = []; for (let x = 0; x <= w; x += minor) if (x % major !== 0) xMinor.push(x);
+  const yMinor: number[] = []; for (let y = 0; y <= h; y += minor) if (y % major !== 0) yMinor.push(y);
+
+  const cx = w / 2, cy = h / 2;
+
   return (
     <>
+      {/* Top ruler */}
       <div
-        className="absolute top-0 left-5 bg-muted border-b border-border text-[9px] text-muted-foreground select-none"
-        style={{ width: dispW, height: 20 }}
+        className="absolute top-0 bg-muted border-b border-border text-[9px] text-muted-foreground select-none overflow-hidden"
+        style={{ left: 22, width: dispW, height: 22 }}
       >
-        {xTicks.map((x) => (
-          <div key={x} className="absolute top-0 bottom-0 border-l border-border/70" style={{ left: x * zoom }}>
-            <span className="pl-0.5">{x}</span>
+        {xMinor.map((x) => (
+          <div key={`mn-${x}`} className="absolute bottom-0 w-px bg-border/60" style={{ left: x * zoom, height: 5 }} />
+        ))}
+        {xMajor.map((x) => (
+          <div key={`mj-${x}`} className="absolute bottom-0 w-px bg-foreground/40" style={{ left: x * zoom, height: 10 }}>
+            <span className="absolute -top-[1px] left-1 leading-none tabular-nums">{x}</span>
           </div>
         ))}
+        {/* Center marker */}
+        <div className="absolute bottom-0 w-px bg-pink-500" style={{ left: cx * zoom, height: 14 }}>
+          <span className="absolute -top-[1px] left-1 leading-none text-pink-600 font-medium">{cx}</span>
+        </div>
       </div>
+
+      {/* Left ruler */}
       <div
-        className="absolute left-0 top-5 bg-muted border-r border-border text-[9px] text-muted-foreground select-none"
-        style={{ height: dispH, width: 20 }}
+        className="absolute left-0 bg-muted border-r border-border text-[9px] text-muted-foreground select-none overflow-hidden"
+        style={{ top: 22, height: dispH, width: 22 }}
       >
-        {yTicks.map((y) => (
-          <div key={y} className="absolute left-0 right-0 border-t border-border/70" style={{ top: y * zoom }}>
-            <span className="pl-0.5 block leading-none pt-0.5">{y}</span>
+        {yMinor.map((y) => (
+          <div key={`mn-${y}`} className="absolute right-0 h-px bg-border/60" style={{ top: y * zoom, width: 5 }} />
+        ))}
+        {yMajor.map((y) => (
+          <div key={`mj-${y}`} className="absolute right-0 h-px bg-foreground/40" style={{ top: y * zoom, width: 10 }}>
+            <span
+              className="absolute right-2.5 top-0 leading-none tabular-nums"
+              style={{ transform: "rotate(-90deg)", transformOrigin: "right top" }}
+            >{y}</span>
           </div>
         ))}
+        {/* Center marker */}
+        <div className="absolute right-0 h-px bg-pink-500" style={{ top: cy * zoom, width: 14 }}>
+          <span
+            className="absolute right-3.5 top-0 leading-none text-pink-600 font-medium"
+            style={{ transform: "rotate(-90deg)", transformOrigin: "right top" }}
+          >{cy}</span>
+        </div>
       </div>
-      <div className="absolute top-0 left-0 size-5 bg-muted border-r border-b border-border" />
+
+      {/* Corner */}
+      <div className="absolute top-0 left-0 bg-muted border-r border-b border-border" style={{ width: 22, height: 22 }} />
     </>
+  );
+}
+
+// Crosshair overlay rendered above the fabric canvas: center + thirds.
+function CenterGuides({ preset, zoom }: { preset: string; zoom: number }) {
+  const { w, h } = getCanvasSize(preset);
+  const dispW = w * zoom;
+  const dispH = h * zoom;
+  return (
+    <div className="pointer-events-none absolute inset-0" style={{ width: dispW, height: dispH }}>
+      {/* Rule-of-thirds (subtle) */}
+      <div className="absolute top-0 bottom-0 border-l border-dashed border-foreground/15" style={{ left: dispW / 3 }} />
+      <div className="absolute top-0 bottom-0 border-l border-dashed border-foreground/15" style={{ left: (dispW / 3) * 2 }} />
+      <div className="absolute left-0 right-0 border-t border-dashed border-foreground/15" style={{ top: dispH / 3 }} />
+      <div className="absolute left-0 right-0 border-t border-dashed border-foreground/15" style={{ top: (dispH / 3) * 2 }} />
+      {/* Center cross (pink) */}
+      <div className="absolute top-0 bottom-0 border-l border-pink-500/60" style={{ left: dispW / 2 }} />
+      <div className="absolute left-0 right-0 border-t border-pink-500/60" style={{ top: dispH / 2 }} />
+      {/* Center dot */}
+      <div
+        className="absolute rounded-full bg-pink-500"
+        style={{ left: dispW / 2 - 3, top: dispH / 2 - 3, width: 6, height: 6 }}
+      />
+    </div>
   );
 }
 
