@@ -167,6 +167,8 @@ function MediaEditorPage() {
           height: v.height,
           durationSeconds: v.durationSeconds,
           name: file.name,
+          companyId: companyId || null,
+          companyMediaId: mediaDocId || undefined,
         };
       } else {
         const dims = await captureImageDims(file);
@@ -180,6 +182,8 @@ function MediaEditorPage() {
           width: dims.width,
           height: dims.height,
           name: file.name,
+          companyId: companyId || null,
+          companyMediaId: mediaDocId || undefined,
         };
       }
 
