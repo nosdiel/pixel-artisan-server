@@ -397,15 +397,54 @@ function EditorPage() {
   // Keyboard: arrow-move and delete selected objects
   useEffect(() => {
     if (!fabric) return;
+    const clipboard: { ref: any } = { ref: null };
+    const doCopy = async () => {
+      const fc = fcRef.current; if (!fc) return;
+      const o = fc.getActiveObject(); if (!o) return;
+      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"] as any);
+    };
+    const doPaste = async () => {
+      const fc = fcRef.current; if (!fc || !clipboard.ref) return;
+      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"] as any);
+      c.set({ left: (c.left ?? 0) + 30, top: (c.top ?? 0) + 30, evented: true });
+      if (c.type === "activeselection" || c.type === "activeSelection") {
+        c.canvas = fc;
+        c.forEachObject?.((o: any) => fc.add(o));
+        c.setCoords?.();
+      } else {
+        fc.add(c);
+      }
+      fc.setActiveObject(c);
+      fc.requestRenderAll();
+      fc.fire("object:modified", { target: c } as any);
+    };
     const onKey = (e: KeyboardEvent) => {
       const fc = fcRef.current; if (!fc) return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
       const obj = fc.getActiveObject();
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === "v" || e.key === "V")) { e.preventDefault(); void doPaste(); return; }
       if (!obj) return;
       // Don't intercept while editing text
       if ((obj as any).isEditing) return;
+      if (mod && (e.key === "c" || e.key === "C")) { e.preventDefault(); void doCopy(); return; }
+      if (mod && (e.key === "x" || e.key === "X")) {
+        e.preventDefault();
+        void doCopy().then(() => {
+          const objs = fc.getActiveObjects();
+          objs.forEach((o) => fc.remove(o));
+          fc.discardActiveObject();
+          fc.requestRenderAll();
+        });
+        return;
+      }
+      if (mod && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        void doCopy().then(doPaste);
+        return;
+      }
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         const objs = fc.getActiveObjects();
@@ -1287,21 +1326,48 @@ function EditorPage() {
 
           <TabsContent value="layers" className="flex-1 overflow-auto mt-0 px-3 pb-3">
             <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground px-1 pb-1">Top of list = front of canvas</p>
               {[...objects].reverse().map((obj, idx) => {
                 const realIdx = objects.length - 1 - idx;
                 const label = obj instanceof fabric.IText || obj instanceof fabric.Textbox
                   ? `T  ${(obj.text || "").slice(0, 20) || "Text"}`
                   : obj instanceof fabric.FabricImage ? "🖼  Image"
                   : obj instanceof fabric.Circle ? "○  Circle"
-                  : obj instanceof fabric.Triangle ? "△  Triangle" : "▭  Shape";
+                  : obj instanceof fabric.Triangle ? "△  Triangle"
+                  : obj instanceof fabric.Line ? "—  Line"
+                  : obj instanceof fabric.Polygon ? "✦  Polygon"
+                  : obj instanceof fabric.Path ? "✎  Drawing"
+                  : obj instanceof fabric.Group ? "▣  Group" : "▭  Shape";
                 const isActive = a === obj;
+                const isTop = idx === 0;
+                const isBottom = idx === objects.length - 1;
                 return (
-                  <div key={realIdx} className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer ${isActive ? "bg-accent" : "hover:bg-accent/50"}`}
+                  <div key={realIdx} className={`group flex items-center gap-1 px-2 py-1.5 rounded text-sm cursor-pointer ${isActive ? "bg-accent" : "hover:bg-accent/50"}`}
                     onClick={() => { fcRef.current?.setActiveObject(obj); fcRef.current?.renderAll(); refresh(); }}>
-                    <button onClick={(e) => { e.stopPropagation(); obj.visible = !obj.visible; fcRef.current?.renderAll(); refresh(); }} className="text-muted-foreground hover:text-foreground">
+                    <button title={obj.visible !== false ? "Hide" : "Show"} onClick={(e) => { e.stopPropagation(); obj.visible = !obj.visible; fcRef.current?.renderAll(); refresh(); }} className="text-muted-foreground hover:text-foreground">
                       {obj.visible !== false ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
                     </button>
                     <span className="flex-1 truncate">{label}</span>
+                    <button title="Bring forward" disabled={isTop}
+                      onClick={(e) => { e.stopPropagation(); const fc = fcRef.current; if (!fc) return; fc.bringObjectForward(obj); fc.renderAll(); pushHistory(); refresh(); }}
+                      className="opacity-60 hover:opacity-100 disabled:opacity-20 text-muted-foreground hover:text-foreground">
+                      <ArrowUp className="size-3.5" />
+                    </button>
+                    <button title="Send backward" disabled={isBottom}
+                      onClick={(e) => { e.stopPropagation(); const fc = fcRef.current; if (!fc) return; fc.sendObjectBackwards(obj); fc.renderAll(); pushHistory(); refresh(); }}
+                      className="opacity-60 hover:opacity-100 disabled:opacity-20 text-muted-foreground hover:text-foreground">
+                      <ArrowDown className="size-3.5" />
+                    </button>
+                    <button title="Duplicate"
+                      onClick={async (e) => { e.stopPropagation(); const fc = fcRef.current; if (!fc) return; const c = await obj.clone(); c.set({ left: (obj.left ?? 0) + 30, top: (obj.top ?? 0) + 30 }); fc.add(c); fc.setActiveObject(c); fc.renderAll(); }}
+                      className="opacity-60 hover:opacity-100 text-muted-foreground hover:text-foreground">
+                      <Copy className="size-3.5" />
+                    </button>
+                    <button title="Delete"
+                      onClick={(e) => { e.stopPropagation(); const fc = fcRef.current; if (!fc) return; fc.remove(obj); fc.discardActiveObject(); fc.renderAll(); }}
+                      className="opacity-60 hover:opacity-100 text-destructive">
+                      <Trash2 className="size-3.5" />
+                    </button>
                   </div>
                 );
               })}
