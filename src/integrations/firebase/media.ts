@@ -134,6 +134,9 @@ export async function uploadEditedMediaToFirebase(
   const companyMediaPath = companyId && companyMediaId
     ? `companies/${companyId}/media/${companyMediaId}`
     : null;
+  if (companyId && !companyMediaId) {
+    throw new Error("companyMediaId could not be resolved before Firebase Storage upload");
+  }
   await setDoc(preMediaRef, {
     ownerUid: uid,
     type: input.kind === "video" ? "video" : "image",
