@@ -423,6 +423,7 @@ function TemplatesPage() {
           width: prep.width,
           height: prep.height,
           name: `${prep.name ?? "template"} (${templateId})`,
+          companyId: prep.companyId ?? null,
         });
         console.log("[publish] uploaded image to Firebase", media);
         toast.info("Waiting for Cloud Function to process image…");
@@ -450,7 +451,13 @@ function TemplatesPage() {
   // ====== Video recording flow ======
   async function recordTemplateVideo(
     templateId: string,
-    prep: { width: number; height: number; canvasJson: FabricCanvasJson; name?: string },
+    prep: {
+      width: number;
+      height: number;
+      canvasJson: FabricCanvasJson;
+      name?: string;
+      companyId?: string | null;
+    },
   ) {
     const fabric = await import("fabric");
     const canvasEl = document.createElement("canvas");
@@ -711,6 +718,7 @@ function TemplatesPage() {
           height: prep.height,
           durationSeconds: clampedDurationSeconds,
           name: `${prep.name ?? "template"} (${templateId})`,
+          companyId: prep.companyId ?? null,
         });
         console.log("[publish] uploaded video to Firebase", media);
         toast.info("Waiting for Cloud Function to transcode video…");
