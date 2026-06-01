@@ -423,6 +423,7 @@ function TemplatesPage() {
           width: prep.width,
           height: prep.height,
           name: `${prep.name ?? "template"} (${templateId})`,
+          companyId: prep.companyId ?? null,
         });
         console.log("[publish] uploaded image to Firebase", media);
         toast.info("Waiting for Cloud Function to process image…");
@@ -711,6 +712,7 @@ function TemplatesPage() {
           height: prep.height,
           durationSeconds: clampedDurationSeconds,
           name: `${prep.name ?? "template"} (${templateId})`,
+          companyId: prep.companyId ?? null,
         });
         console.log("[publish] uploaded video to Firebase", media);
         toast.info("Waiting for Cloud Function to transcode video…");
