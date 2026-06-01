@@ -24,6 +24,7 @@ import {
   ArrowUp, ArrowDown, Undo2, Redo2, ZoomIn, ZoomOut, Maximize2,
   Image as ImageIcon, Layers, Eye, EyeOff, Bold, Italic, Underline,
   AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw, Video as VideoIcon,
+  Pencil, Eraser, Minus, MoveUpRight, Star, Hexagon, Ruler, MousePointer2,
 } from "lucide-react";
 
 const PRESETS: Record<string, { w: number; h: number; label: string }> = {
@@ -161,6 +162,13 @@ function EditorPage() {
   const fontInputRef = useRef<HTMLInputElement>(null);
   const [squareItems, setSquareItems] = useState<SquareCacheItem[]>([]);
   const navigate = useNavigate();
+
+  // Drawing / shape tool state
+  type Tool = "select" | "draw" | "eraser" | "line" | "arrow";
+  const [tool, setTool] = useState<Tool>("select");
+  const [brushColor, setBrushColor] = useState("#111827");
+  const [brushSize, setBrushSize] = useState(8);
+  const [showRulers, setShowRulers] = useState(true);
 
   const resolveOwnerId = useCallback(async () => {
     if (externalCompanyId) return externalCompanyId;
@@ -874,6 +882,127 @@ function EditorPage() {
     fc.add(o); fc.setActiveObject(o); fc.renderAll();
   };
 
+  const addEllipse = () => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const o = new fabric.Ellipse({ left: w / 2 - 180, top: h / 2 - 100, rx: 180, ry: 100, fill: "#3b82f6" });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+  const addStar = (points = 5) => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const outer = 150, inner = 70;
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i < points * 2; i++) {
+      const r = i % 2 === 0 ? outer : inner;
+      const a = (Math.PI / points) * i - Math.PI / 2;
+      pts.push({ x: Math.cos(a) * r + outer, y: Math.sin(a) * r + outer });
+    }
+    const o = new fabric.Polygon(pts, { left: w / 2 - outer, top: h / 2 - outer, fill: "#f59e0b" });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+  const addPolygon = (sides = 6) => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const r = 140;
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i < sides; i++) {
+      const a = (Math.PI * 2 / sides) * i - Math.PI / 2;
+      pts.push({ x: Math.cos(a) * r + r, y: Math.sin(a) * r + r });
+    }
+    const o = new fabric.Polygon(pts, { left: w / 2 - r, top: h / 2 - r, fill: "#10b981" });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+  const addLine = () => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const o = new fabric.Line([w / 2 - 200, h / 2, w / 2 + 200, h / 2], { stroke: brushColor, strokeWidth: Math.max(2, brushSize) });
+    fc.add(o); fc.setActiveObject(o); fc.renderAll();
+  };
+  const addArrow = () => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    const { w, h } = getCanvasSize(preset);
+    const sw = Math.max(2, brushSize);
+    const len = 360;
+    const x1 = w / 2 - len / 2, y = h / 2, x2 = w / 2 + len / 2;
+    const line = new fabric.Line([x1, y, x2 - 18, y], { stroke: brushColor, strokeWidth: sw });
+    const head = new fabric.Triangle({ left: x2, top: y, originX: "center", originY: "center", angle: 90, width: 24, height: 28, fill: brushColor });
+    const grp = new fabric.Group([line, head], { left: x1, top: y - 14 });
+    fc.add(grp); fc.setActiveObject(grp); fc.renderAll();
+  };
+
+  // Apply drawing tool to fabric canvas
+  useEffect(() => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    if (tool === "draw" || tool === "eraser") {
+      fc.isDrawingMode = true;
+      const brush = new fabric.PencilBrush(fc);
+      brush.color = tool === "eraser" ? (bgColor || "#ffffff") : brushColor;
+      brush.width = brushSize;
+      fc.freeDrawingBrush = brush;
+    } else {
+      fc.isDrawingMode = false;
+    }
+  }, [tool, brushColor, brushSize, bgColor, fabric]);
+
+  // Interactive line / arrow drawing
+  useEffect(() => {
+    const fc = fcRef.current; if (!fc || !fabric) return;
+    if (tool !== "line" && tool !== "arrow") return;
+    let drawing = false;
+    let obj: any = null;
+    const onDown = (e: any) => {
+      const pt = (fc as any).getScenePoint ? (fc as any).getScenePoint(e.e) : (fc as any).getPointer(e.e);
+      drawing = true;
+      obj = new fabric.Line([pt.x, pt.y, pt.x, pt.y], {
+        stroke: brushColor,
+        strokeWidth: Math.max(2, brushSize),
+        selectable: false,
+        evented: false,
+      });
+      (obj as any)._isArrowTool = tool === "arrow";
+      fc.add(obj);
+    };
+    const onMove = (e: any) => {
+      if (!drawing || !obj) return;
+      const pt = (fc as any).getScenePoint ? (fc as any).getScenePoint(e.e) : (fc as any).getPointer(e.e);
+      obj.set({ x2: pt.x, y2: pt.y });
+      fc.requestRenderAll();
+    };
+    const onUp = () => {
+      if (!drawing || !obj) return;
+      drawing = false;
+      obj.set({ selectable: true, evented: true });
+      if (tool === "arrow") {
+        const line = obj as Fabric.Line;
+        const x1 = line.x1!, y1 = line.y1!, x2 = line.x2!, y2 = line.y2!;
+        fc.remove(line);
+        const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+        const ln = new fabric.Line([x1, y1, x2, y2], { stroke: brushColor, strokeWidth: Math.max(2, brushSize) });
+        const head = new fabric.Triangle({
+          left: x2, top: y2, originX: "center", originY: "center",
+          angle: angle + 90, width: 22, height: 26, fill: brushColor,
+        });
+        const grp = new fabric.Group([ln, head]);
+        fc.add(grp);
+        fc.setActiveObject(grp);
+      } else {
+        fc.setActiveObject(obj);
+      }
+      obj = null;
+      fc.requestRenderAll();
+      setTool("select");
+    };
+    fc.on("mouse:down", onDown);
+    fc.on("mouse:move", onMove);
+    fc.on("mouse:up", onUp);
+    return () => {
+      fc.off("mouse:down", onDown);
+      fc.off("mouse:move", onMove);
+      fc.off("mouse:up", onUp);
+    };
+  }, [tool, brushColor, brushSize, fabric]);
+
   // Active-object actions
   const a = active;
   const update = (fn: () => void) => { fn(); fcRef.current?.renderAll(); pushHistory(); refresh(); };
@@ -1089,11 +1218,45 @@ function EditorPage() {
             <div className="space-y-2">
               <Label className="text-xs">Add elements</Label>
               <Button variant="outline" className="w-full justify-start" onClick={addText}><Type className="size-4 mr-2" /> Text</Button>
-              <div className="grid grid-cols-3 gap-2">
-                <Button variant="outline" onClick={() => addShape("rect")}><SquareIcon className="size-4" /></Button>
-                <Button variant="outline" onClick={() => addShape("circle")}><CircleIcon className="size-4" /></Button>
-                <Button variant="outline" onClick={() => addShape("triangle")}><TriangleIcon className="size-4" /></Button>
+              <div className="grid grid-cols-4 gap-2">
+                <Button variant="outline" onClick={() => addShape("rect")} title="Rectangle"><SquareIcon className="size-4" /></Button>
+                <Button variant="outline" onClick={() => addShape("circle")} title="Circle"><CircleIcon className="size-4" /></Button>
+                <Button variant="outline" onClick={() => addShape("triangle")} title="Triangle"><TriangleIcon className="size-4" /></Button>
+                <Button variant="outline" onClick={addEllipse} title="Ellipse"><CircleIcon className="size-4" style={{ transform: "scaleX(1.5)" }} /></Button>
+                <Button variant="outline" onClick={() => addStar(5)} title="Star"><Star className="size-4" /></Button>
+                <Button variant="outline" onClick={() => addPolygon(6)} title="Hexagon"><Hexagon className="size-4" /></Button>
+                <Button variant="outline" onClick={addLine} title="Line"><Minus className="size-4" /></Button>
+                <Button variant="outline" onClick={addArrow} title="Arrow"><MoveUpRight className="size-4" /></Button>
               </div>
+              <Separator />
+              <Label className="text-xs">Tools</Label>
+              <div className="grid grid-cols-5 gap-1">
+                <Button variant={tool === "select" ? "default" : "outline"} size="sm" onClick={() => setTool("select")} title="Select"><MousePointer2 className="size-4" /></Button>
+                <Button variant={tool === "draw" ? "default" : "outline"} size="sm" onClick={() => setTool("draw")} title="Paint brush"><Pencil className="size-4" /></Button>
+                <Button variant={tool === "eraser" ? "default" : "outline"} size="sm" onClick={() => setTool("eraser")} title="Eraser"><Eraser className="size-4" /></Button>
+                <Button variant={tool === "line" ? "default" : "outline"} size="sm" onClick={() => setTool("line")} title="Draw line"><Minus className="size-4" /></Button>
+                <Button variant={tool === "arrow" ? "default" : "outline"} size="sm" onClick={() => setTool("arrow")} title="Draw arrow"><MoveUpRight className="size-4" /></Button>
+              </div>
+              {(tool === "draw" || tool === "eraser" || tool === "line" || tool === "arrow") && (
+                <div className="space-y-2 rounded border border-border p-2">
+                  <div>
+                    <Label className="text-xs">Size ({brushSize}px)</Label>
+                    <Slider min={1} max={80} step={1} value={[brushSize]} onValueChange={(v) => setBrushSize(v[0])} className="mt-2" />
+                  </div>
+                  {tool !== "eraser" && (
+                    <div>
+                      <Label className="text-xs">Color</Label>
+                      <div className="flex gap-2 mt-1">
+                        <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} className="h-8 w-10 rounded border border-border bg-transparent cursor-pointer" />
+                        <Input value={brushColor} onChange={(e) => setBrushColor(e.target.value)} className="flex-1 h-8" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <Button variant={showRulers ? "default" : "outline"} size="sm" className="w-full" onClick={() => setShowRulers((v) => !v)}>
+                <Ruler className="size-4 mr-2" /> {showRulers ? "Hide rulers" : "Show rulers"}
+              </Button>
               <label className="flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-sm cursor-pointer hover:bg-accent">
                 <Upload className="size-4" /> Upload image
                 <input type="file" accept="image/*" className="hidden" onChange={onUploadImage} />
@@ -1231,8 +1394,11 @@ function EditorPage() {
           </Button>
         </div>
         <div ref={canvasHostRef} className="flex-1 overflow-auto flex items-start justify-center p-8">
-          <div className="bg-white shadow-[var(--shadow-elegant)] inline-block">
-            <canvas ref={canvasRef} />
+          <div className="inline-block relative" style={{ paddingTop: showRulers ? 20 : 0, paddingLeft: showRulers ? 20 : 0 }}>
+            {showRulers && <Rulers preset={preset} zoom={zoom} />}
+            <div className="bg-white shadow-[var(--shadow-elegant)] inline-block">
+              <canvas ref={canvasRef} />
+            </div>
           </div>
         </div>
       </div>
@@ -1411,6 +1577,45 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
         ))}
       </div>
     </div>
+  );
+}
+
+function Rulers({ preset, zoom }: { preset: string; zoom: number }) {
+  const { w, h } = getCanvasSize(preset);
+  const dispW = w * zoom;
+  const dispH = h * zoom;
+  // Choose tick spacing in canvas px so on-screen spacing stays ~80px
+  const targetPx = 80;
+  const candidates = [10, 20, 50, 100, 200, 500, 1000, 2000];
+  const step = candidates.find((s) => s * zoom >= targetPx) ?? 2000;
+  const xTicks: number[] = [];
+  for (let x = 0; x <= w; x += step) xTicks.push(x);
+  const yTicks: number[] = [];
+  for (let y = 0; y <= h; y += step) yTicks.push(y);
+  return (
+    <>
+      <div
+        className="absolute top-0 left-5 bg-muted border-b border-border text-[9px] text-muted-foreground select-none"
+        style={{ width: dispW, height: 20 }}
+      >
+        {xTicks.map((x) => (
+          <div key={x} className="absolute top-0 bottom-0 border-l border-border/70" style={{ left: x * zoom }}>
+            <span className="pl-0.5">{x}</span>
+          </div>
+        ))}
+      </div>
+      <div
+        className="absolute left-0 top-5 bg-muted border-r border-border text-[9px] text-muted-foreground select-none"
+        style={{ height: dispH, width: 20 }}
+      >
+        {yTicks.map((y) => (
+          <div key={y} className="absolute left-0 right-0 border-t border-border/70" style={{ top: y * zoom }}>
+            <span className="pl-0.5 block leading-none pt-0.5">{y}</span>
+          </div>
+        ))}
+      </div>
+      <div className="absolute top-0 left-0 size-5 bg-muted border-r border-b border-border" />
+    </>
   );
 }
 
