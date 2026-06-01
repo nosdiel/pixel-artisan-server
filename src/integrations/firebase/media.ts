@@ -113,8 +113,21 @@ export async function uploadEditedMediaToFirebase(
 
   const companyId = input.companyId ?? null;
 
-  // 1. Create the Firestore doc up-front so we have a stable id.
-  const mediaRef = await addDoc(mediaCol, {
+  // 1. Create the Firestore doc up-front so we have a stable id. We must
+  //    include companyId/companyMediaId here (NOT only in the post-upload
+  //    updateDoc below) because the Storage-trigger Cloud Function can fire
+  //    and read the doc before the second update commits. Without these
+  //    fields the function logs "No companyId/companyMediaId resolved" and
+  //    skips the company-media mirror.
+  const preMediaRef = doc(mediaCol);
+  const mediaDocId = preMediaRef.id;
+  const companyMediaId = companyId
+    ? input.companyMediaId ?? mediaDocId
+    : null;
+  const companyMediaPath = companyId && companyMediaId
+    ? `companies/${companyId}/media/${companyMediaId}`
+    : null;
+  await setDoc(preMediaRef, {
     ownerUid: uid,
     type: input.kind === "video" ? "video" : "image",
     name: input.name ?? null,
@@ -127,14 +140,10 @@ export async function uploadEditedMediaToFirebase(
     length: input.durationSeconds ?? null,
     size: input.blob.size,
     contentType: input.contentType,
+    companyId,
+    companyMediaId,
+    companyMediaPath,
   });
-  const mediaDocId = mediaRef.id;
-  const companyMediaId = companyId
-    ? input.companyMediaId ?? mediaDocId
-    : null;
-  const companyMediaPath = companyId && companyMediaId
-    ? `companies/${companyId}/media/${companyMediaId}`
-    : null;
 
   const ext = extFor(input.contentType, input.kind === "video" ? "mp4" : "bin");
   const folder = input.kind === "video" ? "videos" : "images";
