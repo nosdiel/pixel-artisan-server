@@ -74,17 +74,26 @@ export async function uploadCompanyMedia(
   const mediaId = input.mediaId ?? makeId();
   const ext = extFor(input.contentType, input.kind === "video" ? "mp4" : "png");
   const path = `rendered/${input.companyId}/${input.templateId}/${mediaId}.${ext}`;
+  const companyMediaPath = `companies/${input.companyId}/media/${mediaId}`;
 
   const fileRef = ref(storage, path);
+  const customMetadata = {
+    mediaDocId: mediaId,
+    companyId: input.companyId,
+    companyMediaId: mediaId,
+    companyMediaPath,
+    templateId: input.templateId,
+    source: "lovable-editor-external",
+  };
+  console.log("[company-media] before uploadBytes", {
+    companyId: input.companyId,
+    companyMediaId: mediaId,
+    companyMediaPath,
+    customMetadata,
+  });
   await uploadBytes(fileRef, input.blob, {
     contentType: input.contentType,
-    customMetadata: {
-      mediaDocId: mediaId,
-      companyId: input.companyId,
-      companyMediaId: mediaId,
-      templateId: input.templateId,
-      source: "lovable-editor-external",
-    },
+    customMetadata,
   });
   const url = await getDownloadURL(fileRef);
 
@@ -100,6 +109,7 @@ export async function uploadCompanyMedia(
         mediaDocId: mediaId,
         companyId: input.companyId,
         companyMediaId: mediaId,
+        companyMediaPath,
         templateId: input.templateId,
         kind: "thumbnail",
       },
