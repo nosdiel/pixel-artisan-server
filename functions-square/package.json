@@ -1,0 +1,20 @@
+{
+  "name": "nini-signage-square",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Firebase Cloud Functions (gen2) for Square Catalog sync. Deployed independently from the media compressor so it can be enabled only when Square credentials are configured.",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "serve": "firebase emulators:start --only functions:square",
+    "deploy": "firebase deploy --only functions:square",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.1.1",
+    "square": "^38.1.0"
+  }
+}
