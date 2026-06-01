@@ -280,6 +280,11 @@ function playObjectAnimation(
         });
         break;
       }
+      case "slideshow":
+        // Slideshow is a continuous frame-cycler — runs on its own loop and
+        // ignores the outer driver loop below.
+        playSlideshow(fc, obj, fabric, anim);
+        return;
     }
   };
 
