@@ -25,6 +25,7 @@ import {
   Image as ImageIcon, Layers, Eye, EyeOff, Bold, Italic, Underline,
   AlignLeft, AlignCenter, AlignRight, Plus, Tag, RefreshCw, Video as VideoIcon,
   Pencil, Eraser, Minus, MoveUpRight, Star, Hexagon, Ruler, MousePointer2,
+  Play, Sparkles,
 } from "lucide-react";
 
 const PRESETS: Record<string, { w: number; h: number; label: string }> = {
@@ -80,6 +81,149 @@ function extractStoragePath(src: string) {
 
 const TRANSPARENT_VIDEO_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 const VIDEO_STORAGE_EXT_RE = /\.(mp4|mov|m4v|webm|ogg|ogv)(?:$|[?#])/i;
+
+// Persisted animation presets. Stored on each fabric object as `animation`
+// so the renderer (or a future preview) can replay them.
+type AnimationType =
+  | "none"
+  | "fade"
+  | "slide-left"
+  | "slide-right"
+  | "slide-up"
+  | "slide-down"
+  | "zoom-in"
+  | "zoom-out"
+  | "spin"
+  | "pulse"
+  | "bounce";
+type ObjectAnimation = { type: AnimationType; duration: number; delay: number; loop: boolean };
+const ANIMATION_OPTIONS: { value: AnimationType; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "fade", label: "Fade in" },
+  { value: "slide-left", label: "Slide from left" },
+  { value: "slide-right", label: "Slide from right" },
+  { value: "slide-up", label: "Slide from top" },
+  { value: "slide-down", label: "Slide from bottom" },
+  { value: "zoom-in", label: "Zoom in" },
+  { value: "zoom-out", label: "Zoom out" },
+  { value: "spin", label: "Spin" },
+  { value: "pulse", label: "Pulse" },
+  { value: "bounce", label: "Bounce in" },
+];
+
+function playObjectAnimation(
+  fc: Fabric.Canvas,
+  obj: any,
+  fabric: FabricModule,
+) {
+  const anim = obj.animation as ObjectAnimation | undefined;
+  if (!anim || anim.type === "none") return;
+  const dur = Math.max(50, (anim.duration ?? 1) * 1000);
+  const delay = Math.max(0, (anim.delay ?? 0) * 1000);
+  const orig = {
+    left: obj.left ?? 0,
+    top: obj.top ?? 0,
+    opacity: obj.opacity ?? 1,
+    scaleX: obj.scaleX ?? 1,
+    scaleY: obj.scaleY ?? 1,
+    angle: obj.angle ?? 0,
+  };
+  const cw = (fc as any).getWidth() / fc.getZoom();
+  const ch = (fc as any).getHeight() / fc.getZoom();
+  const ease = (fabric as any).util?.ease ?? {};
+  const render = () => fc.requestRenderAll();
+
+  const runOnce = (after?: () => void) => {
+    const tween = (opts: any) => (fabric as any).util.animate({ ...opts, onComplete: () => { opts.onComplete?.(); after?.(); } });
+    switch (anim.type) {
+      case "fade":
+        obj.set({ opacity: 0 });
+        tween({
+          startValue: 0, endValue: orig.opacity, duration: dur,
+          onChange: (v: number) => { obj.set("opacity", v); render(); },
+          onComplete: () => obj.set("opacity", orig.opacity),
+        });
+        break;
+      case "slide-left":
+      case "slide-right":
+      case "slide-up":
+      case "slide-down": {
+        const key: "left" | "top" = anim.type === "slide-up" || anim.type === "slide-down" ? "top" : "left";
+        const from = anim.type === "slide-left" ? orig.left - cw
+          : anim.type === "slide-right" ? orig.left + cw
+          : anim.type === "slide-up" ? orig.top - ch
+          : orig.top + ch;
+        const target = key === "left" ? orig.left : orig.top;
+        obj.set(key, from); obj.setCoords();
+        tween({
+          startValue: from, endValue: target, duration: dur, easing: ease.easeOutCubic,
+          onChange: (v: number) => { obj.set(key, v); obj.setCoords(); render(); },
+          onComplete: () => { obj.set({ left: orig.left, top: orig.top }); obj.setCoords(); },
+        });
+        break;
+      }
+      case "zoom-in":
+        obj.set({ scaleX: orig.scaleX * 0.01, scaleY: orig.scaleY * 0.01 });
+        tween({
+          startValue: 0.01, endValue: 1, duration: dur, easing: ease.easeOutCubic,
+          onChange: (v: number) => { obj.set({ scaleX: orig.scaleX * v, scaleY: orig.scaleY * v }); render(); },
+          onComplete: () => obj.set({ scaleX: orig.scaleX, scaleY: orig.scaleY }),
+        });
+        break;
+      case "zoom-out":
+        obj.set({ scaleX: orig.scaleX * 2, scaleY: orig.scaleY * 2, opacity: 0 });
+        tween({
+          startValue: 2, endValue: 1, duration: dur, easing: ease.easeOutCubic,
+          onChange: (v: number) => {
+            obj.set({ scaleX: orig.scaleX * v, scaleY: orig.scaleY * v, opacity: Math.min(1, (2 - v)) });
+            render();
+          },
+          onComplete: () => obj.set({ scaleX: orig.scaleX, scaleY: orig.scaleY, opacity: orig.opacity }),
+        });
+        break;
+      case "spin":
+        tween({
+          startValue: 0, endValue: 360, duration: dur,
+          onChange: (v: number) => { obj.set("angle", (orig.angle + v) % 360); render(); },
+          onComplete: () => obj.set("angle", orig.angle),
+        });
+        break;
+      case "pulse": {
+        const half = dur / 2;
+        (fabric as any).util.animate({
+          startValue: 1, endValue: 1.2, duration: half, easing: ease.easeInOutQuad,
+          onChange: (v: number) => { obj.set({ scaleX: orig.scaleX * v, scaleY: orig.scaleY * v }); render(); },
+          onComplete: () => {
+            tween({
+              startValue: 1.2, endValue: 1, duration: half, easing: ease.easeInOutQuad,
+              onChange: (v: number) => { obj.set({ scaleX: orig.scaleX * v, scaleY: orig.scaleY * v }); render(); },
+              onComplete: () => obj.set({ scaleX: orig.scaleX, scaleY: orig.scaleY }),
+            });
+          },
+        });
+        break;
+      }
+      case "bounce": {
+        const startTop = orig.top - 80;
+        obj.set({ top: startTop, opacity: 0 });
+        (fabric as any).util.animate({
+          startValue: 0, endValue: orig.opacity, duration: Math.min(300, dur / 2),
+          onChange: (v: number) => { obj.set("opacity", v); render(); },
+        });
+        tween({
+          startValue: startTop, endValue: orig.top, duration: dur, easing: ease.easeOutBounce,
+          onChange: (v: number) => { obj.set("top", v); obj.setCoords(); render(); },
+          onComplete: () => { obj.set({ top: orig.top, opacity: orig.opacity }); obj.setCoords(); },
+        });
+        break;
+      }
+    }
+  };
+
+  const loop = anim.loop;
+  const driver = () => runOnce(loop ? () => setTimeout(driver, 200) : undefined);
+  if (delay > 0) setTimeout(driver, delay); else driver();
+}
 
 function isVideoStoragePath(path: string) {
   return VIDEO_STORAGE_EXT_RE.test(path);
@@ -401,11 +545,11 @@ function EditorPage() {
     const doCopy = async () => {
       const fc = fcRef.current; if (!fc) return;
       const o = fc.getActiveObject(); if (!o) return;
-      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"] as any);
+      clipboard.ref = await o.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"] as any);
     };
     const doPaste = async () => {
       const fc = fcRef.current; if (!fc || !clipboard.ref) return;
-      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"] as any);
+      const c = await clipboard.ref.clone(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"] as any);
       c.set({ left: (c.left ?? 0) + 30, top: (c.top ?? 0) + 30, evented: true });
       if (c.type === "activeselection" || c.type === "activeSelection") {
         c.canvas = fc;
@@ -706,7 +850,7 @@ function EditorPage() {
   const pushHistory = () => {
     const fc = fcRef.current;
     if (!fc || historyRef.current.suspend) return;
-    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
+    const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"]);
     patchSerializedMedia(canvasJson.objects, fc.getObjects());
     const json = JSON.stringify(canvasJson);
     const h = historyRef.current;
@@ -1115,7 +1259,7 @@ function EditorPage() {
       fc.setDimensions({ width: w, height: h });
       fc.renderAll();
       const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc"]);
+      const canvasJson = (fc as any).toObject(["imageStoragePath", "squareBinding", "videoStoragePath", "videoSrc", "animation"]);
       patchSerializedMedia(canvasJson.objects, fc.getObjects());
       applyCanvasDisplayZoom(fc, w, h, prevZoom);
 
@@ -1619,6 +1763,14 @@ function EditorPage() {
               <ImageFilters fabric={fabric} image={a as Fabric.FabricImage} onChange={() => { fcRef.current?.renderAll(); pushHistory(); refresh(); }} />
             )}
 
+            {a && fabric && (
+              <AnimationPanel
+                object={a}
+                onChange={() => { pushHistory(); refresh(); }}
+                onPreview={() => { const fc = fcRef.current; if (fc) playObjectAnimation(fc, a as any, fabric); }}
+              />
+            )}
+
             <div>
               <Label className="text-xs">Opacity ({Math.round((a.opacity ?? 1) * 100)}%)</Label>
               <Slider min={0} max={100} step={1} value={[(a.opacity ?? 1) * 100]} onValueChange={(v) => update(() => a.set("opacity", v[0] / 100))} className="mt-2" />
@@ -1771,5 +1923,46 @@ function ImageFilters({ fabric, image, onChange }: { fabric: FabricModule; image
         <Slider min={0} max={100} step={1} value={[blur * 100]} onValueChange={(v) => setFilter(fabric.filters.Blur, { blur: v[0] / 100 })} className="mt-2" />
       </div>
     </>
+  );
+}
+
+function AnimationPanel({ object, onChange, onPreview }: { object: Fabric.Object; onChange: () => void; onPreview: () => void }) {
+  const anim: ObjectAnimation = ((object as any).animation as ObjectAnimation | undefined) ?? { type: "none", duration: 1, delay: 0, loop: false };
+  const update = (patch: Partial<ObjectAnimation>) => {
+    const next: ObjectAnimation = { ...anim, ...patch };
+    if (next.type === "none") delete (object as any).animation;
+    else (object as any).animation = next;
+    onChange();
+  };
+  return (
+    <div className="space-y-2 rounded border border-border p-2">
+      <Label className="text-xs flex items-center gap-1.5"><Sparkles className="size-3" /> Animation</Label>
+      <Select value={anim.type} onValueChange={(v) => update({ type: v as AnimationType })}>
+        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {ANIMATION_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {anim.type !== "none" && (
+        <>
+          <div>
+            <Label className="text-xs">Duration ({anim.duration.toFixed(1)}s)</Label>
+            <Slider min={0.1} max={5} step={0.1} value={[anim.duration]} onValueChange={(v) => update({ duration: v[0] })} className="mt-2" />
+          </div>
+          <div>
+            <Label className="text-xs">Delay ({anim.delay.toFixed(1)}s)</Label>
+            <Slider min={0} max={5} step={0.1} value={[anim.delay]} onValueChange={(v) => update({ delay: v[0] })} className="mt-2" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant={anim.loop ? "default" : "outline"} size="sm" className="flex-1" onClick={() => update({ loop: !anim.loop })}>
+              {anim.loop ? "Looping" : "Loop off"}
+            </Button>
+            <Button size="sm" className="flex-1" onClick={onPreview}>
+              <Play className="size-3.5 mr-1" /> Preview
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
