@@ -998,6 +998,7 @@ function EditorPage() {
         blob: file,
         contentType: file.type || "image/png",
         name: file.name,
+        companyId: loggedInCompanyId,
       });
       toast.loading("Processing image…", { id: tId });
       const ready = await waitForMediaReady(res.mediaDocId).catch(() => null);
@@ -1034,6 +1035,7 @@ function EditorPage() {
         blob: file,
         contentType: file.type || "image/png",
         name: file.name,
+        companyId: loggedInCompanyId,
       });
       toast.loading("Processing image…", { id: tId });
       const ready = await waitForMediaReady(res.mediaDocId).catch(() => null);
@@ -1149,6 +1151,7 @@ function EditorPage() {
         height: result.height ?? null,
         durationSeconds: result.durationSeconds ?? null,
         name: pendingVideoFile?.name,
+        companyId: loggedInCompanyId,
       });
       toast.loading("Cloud Function is transcoding video…", { id: tId });
       const ready = await waitForMediaReady(res.mediaDocId).catch((err) => {
