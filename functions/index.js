@@ -386,6 +386,14 @@ async function processStoragePath({ storagePath, mediaDocId, contentTypeHint }) 
   let companyId = customMeta.companyId || null;
   let companyMediaId = customMeta.companyMediaId || null;
 
+  logger.info("processStoragePath: customMetadata snapshot", {
+    storagePath,
+    customMetadataKeys: Object.keys(customMeta),
+    companyIdFromMeta: companyId,
+    companyMediaIdFromMeta: companyMediaId,
+    mediaDocIdFromMeta: customMeta.mediaDocId || null,
+  });
+
   // Images: if no separate thumbnail is produced, mirror the processed
   // image URL into thumbnail fields so the Android player always has one.
   const fieldsForCompanyDoc = { ...result.fields };
@@ -396,17 +404,31 @@ async function processStoragePath({ storagePath, mediaDocId, contentTypeHint }) 
 
   if (docId) {
     if (!companyId || !companyMediaId) {
-      try {
-        const snap = await firestore.collection(FIRESTORE_COLLECTION).doc(docId).get();
-        const data = snap.exists ? snap.data() || {} : {};
-        if (!companyId && typeof data.companyId === "string") companyId = data.companyId;
-        if (!companyMediaId && typeof data.companyMediaId === "string") companyMediaId = data.companyMediaId;
-      } catch (err) {
-        logger.warn("processStoragePath: failed to read media doc for companyId", {
-          docId,
-          error: String(err),
-        });
+      // The web client writes companyId/companyMediaId into media/{docId}
+      // up-front, but on a cold start the trigger can still beat that
+      // commit. Retry the read a few times before giving up.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const snap = await firestore.collection(FIRESTORE_COLLECTION).doc(docId).get();
+          const data = snap.exists ? snap.data() || {} : {};
+          if (!companyId && typeof data.companyId === "string") companyId = data.companyId;
+          if (!companyMediaId && typeof data.companyMediaId === "string") companyMediaId = data.companyMediaId;
+          if (companyId && companyMediaId) break;
+        } catch (err) {
+          logger.warn("processStoragePath: failed to read media doc for companyId", {
+            docId,
+            attempt,
+            error: String(err),
+          });
+        }
+        // Backoff: 250ms, 500ms, 1s, 2s, 4s
+        await new Promise((r) => setTimeout(r, 250 * Math.pow(2, attempt)));
       }
+      logger.info("processStoragePath: post-fallback companyId resolution", {
+        docId,
+        companyId,
+        companyMediaId,
+      });
     }
 
     await firestore
