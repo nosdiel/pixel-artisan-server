@@ -38,6 +38,18 @@ export type UploadEditedMediaInput = {
   durationSeconds?: number | null;
   /** Display name shown in libraries. */
   name?: string;
+  /**
+   * Optional company id. When provided, the Cloud Function will also mirror
+   * the final processed media into `companies/{companyId}/media/{companyMediaId}`
+   * — the document the Android player reads from. Without it, only the
+   * top-level `media/{mediaDocId}` doc is updated (legacy behaviour).
+   */
+  companyId?: string | null;
+  /**
+   * Optional explicit company media id. Defaults to the generated
+   * `mediaDocId` so the two docs share the same id.
+   */
+  companyMediaId?: string | null;
 };
 
 export type UploadEditedMediaResult = {
@@ -46,6 +58,9 @@ export type UploadEditedMediaResult = {
   url: string;
   thumbnailPath: string | null;
   thumbnailURL: string | null;
+  companyId: string | null;
+  companyMediaId: string | null;
+  companyMediaPath: string | null;
 };
 
 export type FirebaseMediaDoc = {
