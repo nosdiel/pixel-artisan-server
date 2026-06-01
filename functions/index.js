@@ -23,13 +23,11 @@
  *     original (e.g. videos/foo.mp4 -> thumbnails/videos/foo.jpg).
  *   - Re-entry protection: every file we (re)write gets metadata
  *     `processed: "true"` so the Storage trigger ignores its own output.
+ *
+ * Square Catalog sync lives in a separate codebase at `functions-square/`
+ * so the compressor deploys without requiring SQUARE_ACCESS_TOKEN or any
+ * other Square-related secrets.
  */
-
-// Re-export Square Catalog sync functions so they deploy from the same codebase.
-const square = require("./square");
-exports.syncSquareCatalog = square.syncSquareCatalog;
-exports.scheduledSquareSync = square.scheduledSquareSync;
-exports.squareWebhook = square.squareWebhook;
 
 const path = require("path");
 const os = require("os");
