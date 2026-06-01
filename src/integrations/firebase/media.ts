@@ -9,7 +9,6 @@
  */
 
 import {
-  addDoc,
   collection,
   doc,
   onSnapshot,
