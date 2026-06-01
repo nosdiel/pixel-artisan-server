@@ -1925,3 +1925,44 @@ function ImageFilters({ fabric, image, onChange }: { fabric: FabricModule; image
     </>
   );
 }
+
+function AnimationPanel({ object, onChange, onPreview }: { object: Fabric.Object; onChange: () => void; onPreview: () => void }) {
+  const anim: ObjectAnimation = ((object as any).animation as ObjectAnimation | undefined) ?? { type: "none", duration: 1, delay: 0, loop: false };
+  const update = (patch: Partial<ObjectAnimation>) => {
+    const next: ObjectAnimation = { ...anim, ...patch };
+    if (next.type === "none") delete (object as any).animation;
+    else (object as any).animation = next;
+    onChange();
+  };
+  return (
+    <div className="space-y-2 rounded border border-border p-2">
+      <Label className="text-xs flex items-center gap-1.5"><Sparkles className="size-3" /> Animation</Label>
+      <Select value={anim.type} onValueChange={(v) => update({ type: v as AnimationType })}>
+        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {ANIMATION_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {anim.type !== "none" && (
+        <>
+          <div>
+            <Label className="text-xs">Duration ({anim.duration.toFixed(1)}s)</Label>
+            <Slider min={0.1} max={5} step={0.1} value={[anim.duration]} onValueChange={(v) => update({ duration: v[0] })} className="mt-2" />
+          </div>
+          <div>
+            <Label className="text-xs">Delay ({anim.delay.toFixed(1)}s)</Label>
+            <Slider min={0} max={5} step={0.1} value={[anim.delay]} onValueChange={(v) => update({ delay: v[0] })} className="mt-2" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant={anim.loop ? "default" : "outline"} size="sm" className="flex-1" onClick={() => update({ loop: !anim.loop })}>
+              {anim.loop ? "Looping" : "Loop off"}
+            </Button>
+            <Button size="sm" className="flex-1" onClick={onPreview}>
+              <Play className="size-3.5 mr-1" /> Preview
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
