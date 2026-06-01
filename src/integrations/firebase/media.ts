@@ -126,7 +126,11 @@ export async function uploadEditedMediaToFirebase(
     typeof input.companyMediaId === "string" && input.companyMediaId.trim()
       ? input.companyMediaId.trim()
       : null;
-  const companyMediaId = companyId ? requestedCompanyMediaId ?? mediaDocId : null;
+  // If a company upload reaches this function without an explicit media id,
+  // use the generated top-level media doc id. This guarantees the Storage
+  // object has a non-null companyMediaId before uploadBytes() fires the
+  // compressor trigger.
+  const companyMediaId = companyId ? requestedCompanyMediaId || mediaDocId : null;
   const companyMediaPath = companyId && companyMediaId
     ? `companies/${companyId}/media/${companyMediaId}`
     : null;
@@ -155,25 +159,23 @@ export async function uploadEditedMediaToFirebase(
   // 2. Upload the main asset. customMetadata.mediaDocId lets the Storage
   //    trigger know which Firestore doc to update after compression.
   const fileRef = ref(storage, path);
-  const uploadMetadata: Record<string, string> = {
+  const customMetadata: Record<string, string> = {
     mediaDocId,
     ownerUid: uid,
     source: "lovable-editor",
   };
-  if (companyId) uploadMetadata.companyId = companyId;
-  if (companyMediaId) uploadMetadata.companyMediaId = companyMediaId;
-  if (companyMediaPath) uploadMetadata.companyMediaPath = companyMediaPath;
-  console.info("[firebase upload] uploadEditedMediaToFirebase metadata", {
-    mediaDocId,
+  if (companyId) customMetadata.companyId = companyId;
+  if (companyMediaId) customMetadata.companyMediaId = companyMediaId;
+  if (companyMediaPath) customMetadata.companyMediaPath = companyMediaPath;
+  console.log({
     companyId,
     companyMediaId,
     companyMediaPath,
-    path,
-    customMetadata: uploadMetadata,
+    customMetadata,
   });
   await uploadBytes(fileRef, input.blob, {
     contentType: input.contentType,
-    customMetadata: uploadMetadata,
+    customMetadata,
   });
   const url = await getDownloadURL(fileRef);
 
