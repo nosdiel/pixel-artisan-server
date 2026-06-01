@@ -1218,11 +1218,45 @@ function EditorPage() {
             <div className="space-y-2">
               <Label className="text-xs">Add elements</Label>
               <Button variant="outline" className="w-full justify-start" onClick={addText}><Type className="size-4 mr-2" /> Text</Button>
-              <div className="grid grid-cols-3 gap-2">
-                <Button variant="outline" onClick={() => addShape("rect")}><SquareIcon className="size-4" /></Button>
-                <Button variant="outline" onClick={() => addShape("circle")}><CircleIcon className="size-4" /></Button>
-                <Button variant="outline" onClick={() => addShape("triangle")}><TriangleIcon className="size-4" /></Button>
+              <div className="grid grid-cols-4 gap-2">
+                <Button variant="outline" onClick={() => addShape("rect")} title="Rectangle"><SquareIcon className="size-4" /></Button>
+                <Button variant="outline" onClick={() => addShape("circle")} title="Circle"><CircleIcon className="size-4" /></Button>
+                <Button variant="outline" onClick={() => addShape("triangle")} title="Triangle"><TriangleIcon className="size-4" /></Button>
+                <Button variant="outline" onClick={addEllipse} title="Ellipse"><CircleIcon className="size-4" style={{ transform: "scaleX(1.5)" }} /></Button>
+                <Button variant="outline" onClick={() => addStar(5)} title="Star"><Star className="size-4" /></Button>
+                <Button variant="outline" onClick={() => addPolygon(6)} title="Hexagon"><Hexagon className="size-4" /></Button>
+                <Button variant="outline" onClick={addLine} title="Line"><Minus className="size-4" /></Button>
+                <Button variant="outline" onClick={addArrow} title="Arrow"><MoveUpRight className="size-4" /></Button>
               </div>
+              <Separator />
+              <Label className="text-xs">Tools</Label>
+              <div className="grid grid-cols-5 gap-1">
+                <Button variant={tool === "select" ? "default" : "outline"} size="sm" onClick={() => setTool("select")} title="Select"><MousePointer2 className="size-4" /></Button>
+                <Button variant={tool === "draw" ? "default" : "outline"} size="sm" onClick={() => setTool("draw")} title="Paint brush"><Pencil className="size-4" /></Button>
+                <Button variant={tool === "eraser" ? "default" : "outline"} size="sm" onClick={() => setTool("eraser")} title="Eraser"><Eraser className="size-4" /></Button>
+                <Button variant={tool === "line" ? "default" : "outline"} size="sm" onClick={() => setTool("line")} title="Draw line"><Minus className="size-4" /></Button>
+                <Button variant={tool === "arrow" ? "default" : "outline"} size="sm" onClick={() => setTool("arrow")} title="Draw arrow"><MoveUpRight className="size-4" /></Button>
+              </div>
+              {(tool === "draw" || tool === "eraser" || tool === "line" || tool === "arrow") && (
+                <div className="space-y-2 rounded border border-border p-2">
+                  <div>
+                    <Label className="text-xs">Size ({brushSize}px)</Label>
+                    <Slider min={1} max={80} step={1} value={[brushSize]} onValueChange={(v) => setBrushSize(v[0])} className="mt-2" />
+                  </div>
+                  {tool !== "eraser" && (
+                    <div>
+                      <Label className="text-xs">Color</Label>
+                      <div className="flex gap-2 mt-1">
+                        <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} className="h-8 w-10 rounded border border-border bg-transparent cursor-pointer" />
+                        <Input value={brushColor} onChange={(e) => setBrushColor(e.target.value)} className="flex-1 h-8" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <Button variant={showRulers ? "default" : "outline"} size="sm" className="w-full" onClick={() => setShowRulers((v) => !v)}>
+                <Ruler className="size-4 mr-2" /> {showRulers ? "Hide rulers" : "Show rulers"}
+              </Button>
               <label className="flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-border rounded-md text-sm cursor-pointer hover:bg-accent">
                 <Upload className="size-4" /> Upload image
                 <input type="file" accept="image/*" className="hidden" onChange={onUploadImage} />
